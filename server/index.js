@@ -47,10 +47,17 @@ app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }));
 
 // Allow the deployed Vercel frontend (and localhost for dev) to call this API.
+// CLIENT_URL accepts one or more comma-separated origins, so preview deploys
+// (e.g. https://ziishe-git-main-xyz.vercel.app) can be added without a deploy.
+const CLIENT_ORIGINS = String(process.env.CLIENT_URL || '')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
-  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
-  'https://ziishe-store.vercel.app', // update when you know your Vercel URL
+  'https://ziishe.vercel.app',
+  ...CLIENT_ORIGINS,
 ];
 // Pass the array directly — the cors package matches it natively. Passing a
 // function here would require calling its callback or every request hangs.
