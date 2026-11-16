@@ -1,0 +1,39 @@
+{
+  "name": "ziishe-store",
+  "version": "1.0.0",
+  "description": "ZiiShe Clothing Brand - Modern 3D E-Commerce Store",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "node --watch server/index.js",
+    "client": "npm run dev --prefix client",
+    "seed": "node server/seeder.js",
+    "create-admin": "node server/createAdmin.js",
+    "build": "npm run build --prefix client"
+  },
+  "keywords": [
+    "ecommerce",
+    "fashion",
+    "mern"
+  ],
+  "author": "ZiiShe",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.22.3",
+    "express-async-handler": "^1.2.0",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.13.2",
+    "multer": "^2.4.0"
+  },
+  "overrides": {
+    "proxy-addr": "^2.0.8"
+  }
+}
