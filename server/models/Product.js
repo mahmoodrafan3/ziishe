@@ -17,6 +17,9 @@ const productSchema = new mongoose.Schema(
     price: { type: Number, required: true, default: 0 },
     category: { type: String, required: true },
     image: { type: String, required: true },
+    // Full gallery, main photo first. `image` mirrors images[0] so older
+    // screens (cards, cart, orders) keep working unchanged.
+    images: [{ type: String }],
     sizes: [{ type: String }],
     colors: [{ type: String }],
     stock: { type: Number, required: true, default: 0 },

@@ -20,6 +20,8 @@ const NAV = [
 
 const STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
 const STATUSES_SET = new Set(STATUSES);
+// Gallery photos beyond the main one — must match the API's limit.
+const MAX_EXTRA_PHOTOS = 6;
 const ORDER_STATUSES = ['All', ...STATUSES];
 
 const formatDate = (date, withTime = false) => {
@@ -195,7 +197,7 @@ export default function AdminDashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editProduct, setEditProduct] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', price: '', category: '', image: '', imageFile: null, sizes: '', colors: '', stock: '', featured: false });
+  const [form, setForm] = useState({ name: '', description: '', price: '', category: '', image: '', imageFile: null, extras: [], sizes: '', colors: '', stock: '', featured: false });
   const fileInputRef = useRef(null);
   const objectUrlRef = useRef(null);
 
@@ -242,15 +244,18 @@ export default function AdminDashboard() {
   const openModal = (product = null) => {
     if (product) {
       setEditProduct(product);
+      // Gallery photos, minus the main one (which has its own field).
+      const photos = [...new Set([product.image, ...(product.images || [])].filter(Boolean))];
       setForm({
         name: product.name ?? '', description: product.description ?? '', price: product.price ?? '',
         category: product.category ?? '', image: product.image ?? '', imageFile: null,
+        extras: photos.slice(1).map((url) => ({ url, file: null })),
         sizes: (product.sizes || []).join(', '), colors: (product.colors || []).join(', '),
         stock: product.stock ?? '', featured: Boolean(product.featured),
       });
     } else {
       setEditProduct(null);
-      setForm({ name: '', description: '', price: '', category: '', image: '', imageFile: null, sizes: '', colors: '', stock: '', featured: false });
+      setForm({ name: '', description: '', price: '', category: '', image: '', imageFile: null, extras: [], sizes: '', colors: '', stock: '', featured: false });
     }
     setModalOpen(true);
   };
@@ -270,6 +275,37 @@ export default function AdminDashboard() {
     } else {
       setForm((prev) => ({ ...prev, imageFile: null }));
     }
+  };
+
+  const handleGalleryFiles = (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    const room = MAX_EXTRA_PHOTOS - form.extras.length;
+    if (room <= 0) {
+      toast.error(`A product can have up to ${MAX_EXTRA_PHOTOS} extra photos`);
+      return;
+    }
+    if (files.length > room) toast.error(`Only ${room} more photo${room === 1 ? '' : 's'} can be added`);
+    setForm((prev) => ({
+      ...prev,
+      extras: [
+        ...prev.extras,
+        ...files.slice(0, room).map((file) => ({ url: URL.createObjectURL(file), file })),
+      ],
+    }));
+  };
+
+  const removeExtra = (index) => {
+    setForm((prev) => {
+      const target = prev.extras[index];
+      if (target?.file) URL.revokeObjectURL(target.url);
+      return { ...prev, extras: prev.extras.filter((_, i) => i !== index) };
+    });
+  };
+
+  const revokeExtras = (extras = []) => {
+    extras.forEach((item) => { if (item?.file) URL.revokeObjectURL(item.url); });
   };
 
   const clearImage = () => {
@@ -306,6 +342,10 @@ export default function AdminDashboard() {
         payload.append('image', form.image);
       }
 
+      // Extra photos: keep the ones already uploaded, then send new files in order.
+      payload.append('images', JSON.stringify(form.extras.filter((item) => !item.file).map((item) => item.url)));
+      form.extras.filter((item) => item.file).forEach((item) => payload.append('images', item.file));
+
       if (editProduct) {
         await axios.put(`/api/products/${editProduct._id}`, payload, {
           headers: { ...getAdminAuthHeader(), 'Content-Type': 'multipart/form-data' },
@@ -329,6 +369,7 @@ export default function AdminDashboard() {
   const closeModal = () => {
     if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
     if (fileInputRef.current) fileInputRef.current.value = '';
+    revokeExtras(form.extras);
     setModalOpen(false);
   };
 
@@ -918,6 +959,39 @@ export default function AdminDashboard() {
                       <button type="button" className="adm-btn adm-btn-ghost adm-btn-sm" onClick={clearImage} style={{ alignSelf: 'flex-start' }}><FiX /> Clear image</button>
                     )}
                   </div>
+                </div>
+              </div>
+
+              <div className="adm-field span-2">
+                <label htmlFor="ap-gallery">More photos <span className="adm-muted">(up to {MAX_EXTRA_PHOTOS}, shown as thumbnails)</span></label>
+                <div className="adm-gallery">
+                  {form.extras.map((item, i) => (
+                    <div className="adm-gallery-item" key={item.url}>
+                      <img src={item.url} alt={`Extra photo ${i + 1}`} />
+                      <button
+                        type="button"
+                        className="adm-gallery-x"
+                        onClick={() => removeExtra(i)}
+                        aria-label="Remove photo"
+                        title="Remove photo"
+                      >
+                        <FiX />
+                      </button>
+                    </div>
+                  ))}
+                  {form.extras.length < MAX_EXTRA_PHOTOS && (
+                    <label className="adm-gallery-add" title="Add photos">
+                      <FiPlus />
+                      <input
+                        id="ap-gallery"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        multiple
+                        onChange={handleGalleryFiles}
+                        className="adm-file-hidden"
+                      />
+                    </label>
+                  )}
                 </div>
               </div>
 

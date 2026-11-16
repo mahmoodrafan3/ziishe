@@ -7,6 +7,9 @@ import { protect, admin } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
+// Besides the main photo, a product can carry this many gallery photos.
+const MAX_GALLERY_PHOTOS = 6;
+
 const ALLOWED_IMAGE_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -18,7 +21,8 @@ const ALLOWED_IMAGE_TYPES = new Set([
 // to the local disk any more; accepted files are streamed straight to Cloudinary.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  // One main photo plus the gallery photos, all in a single request.
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 + MAX_GALLERY_PHOTOS },
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
       return cb(new Error('UNSUPPORTED_FILE_TYPE'));
@@ -146,6 +150,17 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// Files arrive in two fields: `image` (main photo) and `images` (gallery).
+const uploadProductImages = upload.fields([
+  { name: 'image', maxCount: 1 },
+  { name: 'images', maxCount: MAX_GALLERY_PHOTOS },
+]);
+
+const uploadFiles = (files = []) => Promise.all(files.map(uploadToCloudinary));
+
+// Keeps the gallery unique while preserving its order.
+const dedupe = (urls) => [...new Set(urls.filter(Boolean))];
+
 // Parse a JSON array field sent as a form string, tolerating bad input.
 const parseList = (value) => {
   if (value === undefined) return null;
@@ -159,18 +174,24 @@ const parseList = (value) => {
 };
 
 // POST /api/products (Admin)
-router.post('/', protect, admin, upload.single('image'), async (req, res) => {
+router.post('/', protect, admin, uploadProductImages, async (req, res) => {
   try {
     const { name, description, price, category, sizes, colors, stock, featured } = req.body;
-    const image = req.file ? await uploadToCloudinary(req.file) : req.body.image;
-    if (!image) return res.status(400).json({ message: 'An image is required' });
+    const primaryFile = req.files?.image?.[0];
+    const primary = primaryFile
+      ? await uploadToCloudinary(primaryFile)
+      : asString(req.body.image);
+    const uploadedGallery = await uploadFiles(req.files?.images || []);
+    const images = dedupe([primary, ...uploadedGallery, ...(parseList(req.body.images) ?? [])]);
+    if (!images.length) return res.status(400).json({ message: 'An image is required' });
 
     const product = await Product.create({
       name,
       description,
       price,
       category,
-      image,
+      image: images[0],
+      images,
       sizes: parseList(sizes) ?? [],
       colors: parseList(colors) ?? [],
       stock,
@@ -186,7 +207,7 @@ router.post('/', protect, admin, upload.single('image'), async (req, res) => {
 });
 
 // PUT /api/products/:id (Admin)
-router.put('/:id', protect, admin, upload.single('image'), async (req, res) => {
+router.put('/:id', protect, admin, uploadProductImages, async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: 'Product not found' });
@@ -204,15 +225,27 @@ router.put('/:id', protect, admin, upload.single('image'), async (req, res) => {
     if (nextSizes) product.sizes = nextSizes;
     if (nextColors) product.colors = nextColors;
 
-    if (req.file) {
-      const oldImage = product.image;
-      product.image = await uploadToCloudinary(req.file);
-      // Only try to delete the old asset if it was hosted on Cloudinary.
-      // URL-based images are left as-is because we do not own them.
-      if (oldImage && oldImage.includes('cloudinary.com')) {
-        await deleteOldCloudinaryImage(oldImage);
-      }
-    }
+    const currentImages = dedupe([product.image, ...(product.images || [])]);
+    const primaryFile = req.files?.image?.[0];
+    const primary = primaryFile
+      ? await uploadToCloudinary(primaryFile)
+      : (asString(req.body.image) || currentImages[0]);
+    const uploadedGallery = await uploadFiles(req.files?.images || []);
+    // Omitted `images` means "keep the photos the product already has".
+    const keptExtras = parseList(req.body.images) ?? currentImages.slice(1);
+    const images = dedupe([primary, ...uploadedGallery, ...keptExtras]);
+    if (!images.length) return res.status(400).json({ message: 'An image is required' });
+
+    product.image = images[0];
+    product.images = images;
+
+    // Clean up Cloudinary assets that fell out of the gallery. URL-based
+    // images are skipped because we do not own them.
+    await Promise.all(
+      currentImages
+        .filter((url) => !images.includes(url) && url.includes('cloudinary.com'))
+        .map(deleteOldCloudinaryImage)
+    );
 
     const updated = await product.save();
     res.json(updated);

@@ -35,6 +35,7 @@ export default function ProductDetail() {
   const [loading, setLoading] = useState(true);
   const [selectedSize, setSelectedSize] = useState('');
   const [selectedColor, setSelectedColor] = useState('');
+  const [activeImage, setActiveImage] = useState('');
   const [qty, setQty] = useState(1);
   const { addToCart } = useCart();
   const { user } = useAuth();
@@ -56,6 +57,7 @@ export default function ProductDetail() {
     axios.get(`/api/products/${id}`)
       .then(({ data }) => {
         setProduct(data);
+        setActiveImage(data.image || '');
         if (data.sizes?.length) setSelectedSize(data.sizes[0]);
         if (data.colors?.length) setSelectedColor(data.colors[0]);
         setLoading(false);
@@ -162,9 +164,11 @@ export default function ProductDetail() {
     </div>
   );
 
+  // Main photo first, then the gallery photos, without duplicates.
+  const gallery = [...new Set([product.image, ...(product.images || [])].filter(Boolean))];
+
   return (
-    <div className="product-detail">
-      <Navbar />
+    <div className="product-detail">      <Navbar />
       <div className="container">
         <div className="detail-grid">
           {/* Gallery */}
@@ -173,8 +177,27 @@ export default function ProductDetail() {
               <button type="button" className="detail-back-btn" aria-label="Go back" title="Back" onClick={() => navigate(window.history.state?.idx > 0 ? -1 : '/shop')}>
                 <span aria-hidden="true">←</span>
               </button>
-              <img src={product.image} alt={product.name} />
+              <img src={activeImage || product.image} alt={product.name} />
             </div>
+
+            {/* Every photo the product has; the main one is shown above. */}
+            {gallery.length > 1 && (
+              <div className="detail-thumbs" role="list" aria-label="Product photos">
+                {gallery.map((src, i) => (
+                  <button
+                    key={src}
+                    type="button"
+                    role="listitem"
+                    className={`detail-thumb${src === (activeImage || product.image) ? ' active' : ''}`}
+                    onClick={() => setActiveImage(src)}
+                    aria-label={`Show photo ${i + 1} of ${gallery.length}`}
+                    aria-pressed={src === (activeImage || product.image)}
+                  >
+                    <img src={src} alt="" loading="lazy" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Info */}
