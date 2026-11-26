@@ -70,6 +70,8 @@ const CLIENT_ORIGINS = String(process.env.CLIENT_URL || '')
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'https://ziishe.vercel.app',
+  'https://ziishe.in',
+  'https://www.ziishe.in',
   ...CLIENT_ORIGINS,
 ];
 // Pass the array directly — the cors package matches it natively. Passing a

@@ -124,5 +124,5 @@ To reset the password later, re-run `npm run create-admin`.
 
 ## 5. Deploy
 
-- **Client → Vercel** (`client/vercel.json` handles SPA routing). Set `VITE_API_URL=https://ziishe.onrender.com` (no trailing slash) in the Vercel project's environment variables, then redeploy.
-- **Server → Render/Railway**. Set `CLIENT_URL=https://ziishe.vercel.app` (comma-separate multiple origins), plus `MONGO_URI`, `JWT_SECRET` (≥32 random chars), `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`. `PORT` is supplied by Render.
+- **Client → Vercel** (`client/vercel.json` handles SPA routing). Domains: `https://ziishe.in`, `https://www.ziishe.in`. Set `VITE_API_URL=https://api.ziishe.in` (no trailing slash) in the Vercel project's environment variables, then redeploy. If it is missing, production falls back to `https://api.ziishe.in`.
+- **Server → Render/Railway**. Domains: `https://api.ziishe.in`. Set `CLIENT_URL=https://ziishe.in,https://www.ziishe.in` (comma-separate multiple origins), plus `MONGO_URI`, `JWT_SECRET` (≥32 random chars), `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`. `PORT` is supplied by Render.

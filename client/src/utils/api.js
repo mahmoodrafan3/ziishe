@@ -3,7 +3,10 @@
 // relative. In production the baseURL points at the deployed Render backend.
 import axios from 'axios';
 
-export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/$/, '');
+// Production falls back to the custom API domain so a missing VITE_API_URL on
+// Vercel can never silently point the deployed storefront at localhost.
+const FALLBACK_API_URL = import.meta.env.DEV ? 'http://localhost:5000' : 'https://api.ziishe.in';
+export const API_URL = (import.meta.env.VITE_API_URL || FALLBACK_API_URL).replace(/\/$/, '');
 
 axios.defaults.baseURL = API_URL;
 axios.defaults.withCredentials = true;
