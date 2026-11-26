@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import cloudinary from '../config/cloudinary.js';
 import Product from '../models/Product.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
+import { subscribe, broadcast } from '../utils/realtime.js';
+import { nextProductCode } from '../utils/productCode.js';
 
 const router = express.Router();
 
@@ -135,6 +137,12 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/products/events — live catalogue updates for the storefront.
+// Must be declared before `/:id` so it isn't read as a product id.
+router.get('/events', (req, res) => {
+  subscribe(req, res);
+});
+
 // GET /api/products/:id
 router.get('/:id', async (req, res) => {
   try {
@@ -161,6 +169,20 @@ const uploadFiles = (files = []) => Promise.all(files.map(uploadToCloudinary));
 // Keeps the gallery unique while preserving its order.
 const dedupe = (urls) => [...new Set(urls.filter(Boolean))];
 
+// Money fields arrive as strings from FormData.
+const toMoney = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+};
+
+// Only these home page placements are accepted from the admin form.
+const HOME_PLACEMENTS = new Set(['hero', 'curated', 'essentials']);
+const parsePlacements = (value) => {
+  const list = parseList(value);
+  if (!list) return null;
+  return [...new Set(list.filter((item) => HOME_PLACEMENTS.has(item)))];
+};
+
 // Parse a JSON array field sent as a form string, tolerating bad input.
 const parseList = (value) => {
   if (value === undefined) return null;
@@ -177,6 +199,7 @@ const parseList = (value) => {
 router.post('/', protect, admin, uploadProductImages, async (req, res) => {
   try {
     const { name, description, price, category, sizes, colors, stock, featured } = req.body;
+    const mrp = toMoney(req.body.mrp);
     const primaryFile = req.files?.image?.[0];
     const primary = primaryFile
       ? await uploadToCloudinary(primaryFile)
@@ -185,10 +208,11 @@ router.post('/', protect, admin, uploadProductImages, async (req, res) => {
     const images = dedupe([primary, ...uploadedGallery, ...(parseList(req.body.images) ?? [])]);
     if (!images.length) return res.status(400).json({ message: 'An image is required' });
 
-    const product = await Product.create({
+    const data = {
       name,
       description,
       price,
+      mrp: mrp ?? 0,
       category,
       image: images[0],
       images,
@@ -196,11 +220,28 @@ router.post('/', protect, admin, uploadProductImages, async (req, res) => {
       colors: parseList(colors) ?? [],
       stock,
       featured: featured === 'true',
-    });
+      placements: parsePlacements(req.body.placements) ?? [],
+    };
+
+    // Two admins saving at the same moment can read the same last number;
+    // retry with the next free code when the unique index rejects it.
+    let product;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        product = await Product.create({ ...data, code: await nextProductCode(category) });
+        break;
+      } catch (err) {
+        if (err?.code !== 11000 || attempt === 2) throw err;
+      }
+    }
+    broadcast('products', { action: 'created', id: product._id });
     res.status(201).json(product);
   } catch (err) {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ message: 'Invalid product data' });
+    }
+    if (err?.code === 11000) {
+      return res.status(409).json({ message: 'Could not assign a product id, please retry' });
     }
     serverError(res, err, 'create');
   }
@@ -216,14 +257,17 @@ router.put('/:id', protect, admin, uploadProductImages, async (req, res) => {
     product.name = name ?? product.name;
     product.description = description ?? product.description;
     product.price = price ?? product.price;
+    if (req.body.mrp !== undefined) product.mrp = toMoney(req.body.mrp) ?? 0;
     product.category = category ?? product.category;
     product.stock = stock ?? product.stock;
     product.featured = featured !== undefined ? featured === 'true' : product.featured;
 
     const nextSizes = parseList(sizes);
     const nextColors = parseList(colors);
+    const nextPlacements = parsePlacements(req.body.placements);
     if (nextSizes) product.sizes = nextSizes;
     if (nextColors) product.colors = nextColors;
+    if (nextPlacements) product.placements = nextPlacements;
 
     const currentImages = dedupe([product.image, ...(product.images || [])]);
     const primaryFile = req.files?.image?.[0];
@@ -239,6 +283,12 @@ router.put('/:id', protect, admin, uploadProductImages, async (req, res) => {
     product.image = images[0];
     product.images = images;
 
+    // Products created before codes existed get one on their next save. The
+    // code never changes afterwards, even if the category is renamed.
+    if (!product.code) {
+      product.code = await nextProductCode(product.category, product._id);
+    }
+
     // Clean up Cloudinary assets that fell out of the gallery. URL-based
     // images are skipped because we do not own them.
     await Promise.all(
@@ -248,6 +298,7 @@ router.put('/:id', protect, admin, uploadProductImages, async (req, res) => {
     );
 
     const updated = await product.save();
+    broadcast('products', { action: 'updated', id: updated._id });
     res.json(updated);
   } catch (err) {
     if (err.name === 'CastError') {
@@ -257,10 +308,40 @@ router.put('/:id', protect, admin, uploadProductImages, async (req, res) => {
   }
 });
 
+// PATCH /api/products/:id/placements (Admin)
+// Toggles a product's home page sections without touching its photos or other
+// fields — used by the Home page preview in the admin console.
+router.patch('/:id/placements', protect, admin, async (req, res) => {
+  try {
+    const placements = parsePlacements(req.body?.placements);
+    if (!placements) {
+      return res.status(400).json({ message: 'placements must be an array' });
+    }
+
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { placements },
+      { new: true, runValidators: true }
+    );
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    broadcast('products', { action: 'placements', id: product._id });
+    res.json(product);
+  } catch (err) {
+    if (err.name === 'CastError') {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ message: 'Invalid placements' });
+    }
+    serverError(res, err, 'placements');
+  }
+});
+
 // DELETE /api/products/:id (Admin)
 router.delete('/:id', protect, admin, async (req, res) => {
   try {
     await Product.findByIdAndDelete(req.params.id);
+    broadcast('products', { action: 'deleted', id: req.params.id });
     res.json({ message: 'Product removed' });
   } catch (err) {
     if (err.name === 'CastError') {
@@ -300,6 +381,7 @@ router.post('/:id/reviews', protect, async (req, res) => {
       product.reviews.reduce((a, r) => a + r.rating, 0) / product.reviews.length;
 
     await product.save();
+    broadcast('products', { action: 'review', id: product._id });
     res.status(201).json({ message: 'Review added' });
   } catch (err) {
     if (err.name === 'CastError') {

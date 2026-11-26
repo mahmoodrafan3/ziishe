@@ -167,6 +167,35 @@ router.post('/addresses', protect, async (req, res) => {
   }
 });
 
+// PUT /api/auth/addresses/:addressId — edit a saved delivery address.
+router.put('/addresses/:addressId', protect, async (req, res) => {
+  try {
+    const { label, name, phone, address, city, state, postalCode } = req.body;
+    if (!String(address || '').trim() || !String(city || '').trim()) {
+      return res.status(400).json({ message: 'Street address and city are required' });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const saved = user.addresses.id(req.params.addressId);
+    if (!saved) return res.status(404).json({ message: 'Address not found' });
+
+    saved.label = String(label || saved.label || 'Home');
+    saved.name = String(name || '');
+    saved.phone = String(phone || '');
+    saved.address = String(address).trim();
+    saved.city = String(city).trim();
+    saved.state = String(state || '');
+    saved.postalCode = String(postalCode || '');
+
+    await user.save();
+    res.json(publicUser(user));
+  } catch (err) {
+    serverError(res, err, 'addresses:update');
+  }
+});
+
 // DELETE /api/auth/addresses/:addressId — remove one saved address.
 router.delete('/addresses/:addressId', protect, async (req, res) => {
   try {

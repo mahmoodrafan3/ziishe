@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import Navbar from '../../components/Navbar';
 import Footer from '../../components/Footer';
+import { FiArrowLeft } from 'react-icons/fi';
 
 /**
  * Shared shell for every /profile/* settings page: navbar, back link to the
@@ -12,7 +13,7 @@ export default function SettingsShell({ title, subtitle, notice, children }) {
       <Navbar />
       <div className="container settings-container">
         <Link to="/profile" className="settings-back">
-          <span aria-hidden="true">←</span> Back to profile
+          <FiArrowLeft aria-hidden="true" /> Back to profile
         </Link>
 
         <h1 className="settings-title">{title}</h1>

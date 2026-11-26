@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useCart } from '../context/CartContext';
 import { Link } from 'react-router-dom';
+import { FiShoppingBag, FiX } from 'react-icons/fi';
 import { formatPrice } from '../utils/helpers';
 
 export default function CartDrawer() {
@@ -35,14 +36,14 @@ export default function CartDrawer() {
             )}
           </h2>
           <button className="cart-close" onClick={() => setIsOpen(false)} aria-label="Close cart">
-            ✕
+            <FiX aria-hidden="true" />
           </button>
         </div>
 
         {/* Items */}
         {cartItems.length === 0 ? (
           <div className="cart-empty">
-            <div className="cart-empty-icon">🛍️</div>
+            <div className="cart-empty-icon" aria-hidden="true"><FiShoppingBag /></div>
             <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem' }}>Your cart is empty</h3>
             <p style={{ fontSize: '0.9rem' }}>Discover our latest collection and add your favorites.</p>
             <Link to="/shop" className="btn btn-primary" onClick={() => setIsOpen(false)}>
@@ -75,7 +76,7 @@ export default function CartDrawer() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
                     <span className="cart-item-price">{formatPrice(item.price * item.qty)}</span>
                     <button className="cart-item-remove" onClick={() => removeFromCart(item.key)} aria-label="Remove">
-                      ✕
+                      <FiX aria-hidden="true" />
                     </button>
                   </div>
                 </div>

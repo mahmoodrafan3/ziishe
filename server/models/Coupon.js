@@ -9,6 +9,11 @@ const couponSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     active: { type: Boolean, default: true },
     expiresAt: { type: Date, default: null },
+    // Which items the discount applies to. The discount is calculated on the
+    // subtotal of the eligible items only, not the whole cart.
+    scope: { type: String, enum: ['all', 'products', 'categories'], default: 'all' },
+    products: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+    categories: [{ type: String }],
   },
   { timestamps: true }
 );

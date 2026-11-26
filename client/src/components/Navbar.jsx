@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
+import { useLike } from '../context/LikeContext';
 import { useAuth } from '../context/AuthContext';
 import CartDrawer from './CartDrawer';
 import BottomNav from './BottomNav';
@@ -10,6 +11,7 @@ export default function Navbar({ dark = false }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const { cartCount, setIsOpen } = useCart();
+  const { likeCount } = useLike();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -72,6 +74,14 @@ export default function Navbar({ dark = false }) {
               </svg>
             </button>
 
+            {/* Liked pieces */}
+            <Link to="/liked" className="nav-icon-btn nav-icon-btn--liked" style={{ color: textColor }} title="Liked Pieces" aria-label={`Liked pieces${likeCount > 0 ? `, ${likeCount} saved` : ''}`}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21.2l7.7-7.7 1.1-1.1a5.5 5.5 0 0 0 0-7.8z"/>
+              </svg>
+              {likeCount > 0 && <span className="cart-badge">{likeCount}</span>}
+            </Link>
+
             {/* Profile */}
             {user ? (
               <button className="nav-icon-btn nav-icon-btn--account" style={{ color: textColor }}
@@ -118,6 +128,7 @@ export default function Navbar({ dark = false }) {
         ].map(({ to, label }) => (
           <Link key={to} to={to} className="nav-link" onClick={() => setMenuOpen(false)}>{label}</Link>
         ))}
+        <Link to="/liked" className="nav-link" onClick={() => setMenuOpen(false)}>Liked Pieces</Link>
         {user ? (
           <>
             <Link to="/profile" className="nav-link" onClick={() => setMenuOpen(false)}>Profile</Link>

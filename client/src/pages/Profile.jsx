@@ -1,22 +1,41 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { useAuth } from '../context/AuthContext';
 import { getAuthHeader, formatPrice, statusColor } from '../utils/helpers';
+import useLiveUpdates from '../hooks/useLiveUpdates';
+import {
+  FiHeart, FiUser, FiMapPin, FiGlobe, FiBell, FiShield,
+  FiFileText, FiHelpCircle, FiLogOut, FiChevronRight, FiPackage,
+  FiMail, FiMessageCircle,
+} from 'react-icons/fi';
+
+const SUPPORT_EMAIL = 'support@ziishe.com';
+// WhatsApp number in international format, digits only — update this to the
+// store's number to point the chat at the right account.
+const SUPPORT_WHATSAPP = '919000000000';
+const WHATSAPP_LINK = `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(
+  'Hi ZiiShe, I need help with my order.'
+)}`;
+const CONTACT_LINKS = [
+  { href: `mailto:${SUPPORT_EMAIL}`, label: 'Email Us', hint: SUPPORT_EMAIL, icon: FiMail, external: false },
+  { href: WHATSAPP_LINK, label: 'Chat on WhatsApp', hint: 'Typically replies within a day', icon: FiMessageCircle, external: true },
+];
 
 const ACCOUNT_SETTINGS = [
-  { to: '/profile/settings',      label: 'Edit Profile',          icon: '👤' },
-  { to: '/profile/addresses',     label: 'Saved Addresses',       icon: '📍' },
-  { to: '/profile/language',      label: 'Select Language',       icon: '🌐' },
-  { to: '/profile/notifications', label: 'Notification Settings', icon: '🔔' },
-  { to: '/profile/privacy',       label: 'Privacy Centre',        icon: '🛡️' },
+  { to: '/liked',                 label: 'Liked Pieces',          icon: FiHeart },
+  { to: '/profile/settings',      label: 'Edit Profile',          icon: FiUser },
+  { to: '/profile/addresses',     label: 'Saved Addresses',       icon: FiMapPin },
+  { to: '/profile/language',      label: 'Select Language',       icon: FiGlobe },
+  { to: '/profile/notifications', label: 'Notification Settings', icon: FiBell },
+  { to: '/profile/privacy',       label: 'Privacy Centre',        icon: FiShield },
 ];
 
 const INFO_LINKS = [
-  { to: '/profile/terms', label: 'Terms, Policy & License', icon: '📄' },
-  { to: '/profile/faqs',  label: 'Browse FAQs',             icon: '❓' },
+  { to: '/profile/terms', label: 'Terms, Policy & License', icon: FiFileText },
+  { to: '/profile/faqs',  label: 'Browse FAQs',             icon: FiHelpCircle },
 ];
 
 export default function Profile() {
@@ -25,12 +44,25 @@ export default function Profile() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const loadOrders = useCallback(async () => {
+    if (!user) return;
+    try {
+      const { data } = await axios.get('/api/orders/myorders', { headers: getAuthHeader() });
+      setOrders(data);
+    } catch {
+      /* keep the last known list */
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (!user) { navigate('/login'); return; }
-    axios.get('/api/orders/myorders', { headers: getAuthHeader() })
-      .then(({ data }) => { setOrders(data); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [user]);
+    loadOrders();
+  }, [user, loadOrders, navigate]);
+
+  // A status change made in the admin console shows up here immediately.
+  useLiveUpdates(loadOrders);
 
   const handleLogout = () => { logout(); navigate('/'); };
 
@@ -50,12 +82,12 @@ export default function Profile() {
             <nav className="settings-menu">
               <p className="settings-group-title">Account Settings</p>
               <ul className="settings-menu-list">
-                {ACCOUNT_SETTINGS.map((item) => (
-                  <li key={item.to}>
-                    <Link to={item.to} className="settings-link">
-                      <span className="settings-link-icon" aria-hidden="true">{item.icon}</span>
-                      <span className="settings-link-label">{item.label}</span>
-                      <span className="settings-link-chevron" aria-hidden="true">›</span>
+                {ACCOUNT_SETTINGS.map(({ to, label, icon: Icon }) => (
+                  <li key={to}>
+                    <Link to={to} className="settings-link">
+                      <span className="settings-link-icon" aria-hidden="true"><Icon /></span>
+                      <span className="settings-link-label">{label}</span>
+                      <span className="settings-link-chevron" aria-hidden="true"><FiChevronRight /></span>
                     </Link>
                   </li>
                 ))}
@@ -63,19 +95,39 @@ export default function Profile() {
 
               <p className="settings-group-title">Feedback &amp; Information</p>
               <ul className="settings-menu-list">
-                {INFO_LINKS.map((item) => (
-                  <li key={item.to}>
-                    <Link to={item.to} className="settings-link">
-                      <span className="settings-link-icon" aria-hidden="true">{item.icon}</span>
-                      <span className="settings-link-label">{item.label}</span>
-                      <span className="settings-link-chevron" aria-hidden="true">›</span>
+                {INFO_LINKS.map(({ to, label, icon: Icon }) => (
+                  <li key={to}>
+                    <Link to={to} className="settings-link">
+                      <span className="settings-link-icon" aria-hidden="true"><Icon /></span>
+                      <span className="settings-link-label">{label}</span>
+                      <span className="settings-link-chevron" aria-hidden="true"><FiChevronRight /></span>
                     </Link>
                   </li>
                 ))}
               </ul>
 
+              <p className="settings-group-title">Contact Us</p>
+              <ul className="settings-menu-list">
+                {CONTACT_LINKS.map(({ href, label, hint, icon: Icon, external }) => (
+                  <li key={href}>
+                    <a
+                      href={href}
+                      className="settings-link"
+                      {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                    >
+                      <span className="settings-link-icon" aria-hidden="true"><Icon /></span>
+                      <span className="settings-link-label">
+                        {label}
+                        <span className="settings-link-hint">{hint}</span>
+                      </span>
+                      <span className="settings-link-chevron" aria-hidden="true"><FiChevronRight /></span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+
               <button type="button" className="settings-link settings-signout" onClick={handleLogout}>
-                <span className="settings-link-icon" aria-hidden="true">↩</span>
+                <span className="settings-link-icon" aria-hidden="true"><FiLogOut /></span>
                 <span className="settings-link-label">Sign Out</span>
               </button>
             </nav>
@@ -93,7 +145,7 @@ export default function Profile() {
               ))
             ) : orders.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--gray)', background: 'var(--cream-light)', borderRadius: '12px' }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📦</div>
+                <div style={{ fontSize: '3rem', marginBottom: '1rem', color: 'var(--gold)' }} aria-hidden="true"><FiPackage /></div>
                 <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', marginBottom: '0.75rem' }}>No orders yet</h3>
                 <p style={{ marginBottom: '2rem', fontSize: '0.9rem' }}>Start shopping and your orders will appear here.</p>
                 <Link to="/shop" className="btn btn-primary">Shop Now</Link>

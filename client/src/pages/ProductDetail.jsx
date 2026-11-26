@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -6,8 +6,12 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import ProductCard from '../components/ProductCard';
 import { useCart } from '../context/CartContext';
+import { useLike } from '../context/LikeContext';
 import { useAuth } from '../context/AuthContext';
-import { formatPrice, getAuthHeader } from '../utils/helpers';
+import { formatPrice, getAuthHeader, getDiscount, getRatingSummary } from '../utils/helpers';
+import useLiveUpdates from '../hooks/useLiveUpdates';
+import StarRating from '../components/StarRating';
+import { FiArrowLeft, FiCheck, FiChevronLeft, FiChevronRight, FiHeart, FiStar } from 'react-icons/fi';
 
 const PIN_RE = /^\d{6}$/;
 
@@ -38,6 +42,7 @@ export default function ProductDetail() {
   const [activeImage, setActiveImage] = useState('');
   const [qty, setQty] = useState(1);
   const { addToCart } = useCart();
+  const { isLiked, toggleLike } = useLike();
   const { user } = useAuth();
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
@@ -52,32 +57,47 @@ export default function ProductDetail() {
 
   const colorMap = { Black: '#0D0D0D', Cream: '#E9DBC5', White: '#FFFFFF', Navy: '#1e3a5f' };
 
+  // Re-reads the product, keeping choices the shopper already made unless the
+  // option has been removed. Runs on mount and on every admin edit.
+  const loadProduct = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`/api/products/${id}`);
+      const photos = [...new Set([data.image, ...(data.images || [])].filter(Boolean))];
+      setProduct(data);
+      setActiveImage((current) => (current && photos.includes(current) ? current : (data.image || '')));
+      setSelectedSize((current) => (current && data.sizes?.includes(current) ? current : (data.sizes?.[0] || '')));
+      setSelectedColor((current) => (current && data.colors?.includes(current) ? current : (data.colors?.[0] || '')));
+    } catch {
+      // Network hiccup, or the product was just deleted — keep what is on screen.
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     window.scrollTo(0, 0);
-    axios.get(`/api/products/${id}`)
-      .then(({ data }) => {
-        setProduct(data);
-        setActiveImage(data.image || '');
-        if (data.sizes?.length) setSelectedSize(data.sizes[0]);
-        if (data.colors?.length) setSelectedColor(data.colors[0]);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [id]);
+    loadProduct();
+  }, [loadProduct]);
 
   // "Similar Products": same category first, then topped up with the other
   // products so the section still shows when a category has only one item.
-  useEffect(() => {
+  const loadSimilar = useCallback(async () => {
     if (!product?.category) return;
-    axios.get('/api/products')
-      .then(({ data }) => {
-        const others = data.filter((p) => p._id !== id);
-        const sameCategory = others.filter((p) => p.category === product.category);
-        const rest = others.filter((p) => p.category !== product.category);
-        setSimilar([...sameCategory, ...rest].slice(0, 8)); // one scrolling row
-      })
-      .catch(() => setSimilar([]));
+    try {
+      const { data } = await axios.get('/api/products');
+      const others = data.filter((p) => p._id !== id);
+      const sameCategory = others.filter((p) => p.category === product.category);
+      const rest = others.filter((p) => p.category !== product.category);
+      setSimilar([...sameCategory, ...rest].slice(0, 8)); // one scrolling row
+    } catch {
+      setSimilar([]);
+    }
   }, [product?.category, id]);
+
+  useEffect(() => { loadSimilar(); }, [loadSimilar]);
+
+  // Admin edits (price, photos, stock, sections) land here without a reload.
+  useLiveUpdates(() => { loadProduct(); loadSimilar(); });
 
   const handleAddToCart = () => {
     if (!selectedSize && product?.sizes?.length) {
@@ -86,6 +106,15 @@ export default function ProductDetail() {
     }
     addToCart(product, qty, selectedSize, selectedColor);
     toast.success(`${product.name} added to cart!`, {
+      style: { fontFamily: 'var(--font-sans)', background: 'var(--black)', color: 'var(--cream)', borderRadius: '4px' },
+      iconTheme: { primary: 'var(--gold)', secondary: 'var(--black)' },
+    });
+  };
+
+  const handleToggleLike = () => {
+    if (!product) return;
+    toggleLike(product);
+    toast.success(liked ? `${product.name} removed from liked` : `${product.name} added to liked`, {
       style: { fontFamily: 'var(--font-sans)', background: 'var(--black)', color: 'var(--cream)', borderRadius: '4px' },
       iconTheme: { primary: 'var(--gold)', secondary: 'var(--black)' },
     });
@@ -140,7 +169,7 @@ export default function ProductDetail() {
       <Navbar />
       <div className="container product-loading-content">
         <button type="button" className="shop-back-btn" onClick={() => navigate(window.history.state?.idx > 0 ? -1 : '/shop')}>
-          <span aria-hidden="true">←</span> Back
+          <FiArrowLeft aria-hidden="true" /> Back
         </button>
         <div className="detail-grid">
           <div className="skeleton" style={{ aspectRatio: '3/4', borderRadius: '16px' }} />
@@ -166,6 +195,9 @@ export default function ProductDetail() {
 
   // Main photo first, then the gallery photos, without duplicates.
   const gallery = [...new Set([product.image, ...(product.images || [])].filter(Boolean))];
+  const liked = isLiked(product._id);
+  const discount = getDiscount(product);
+  const { rating: averageRating, count: reviewCount } = getRatingSummary(product);
 
   return (
     <div className="product-detail">      <Navbar />
@@ -175,7 +207,17 @@ export default function ProductDetail() {
           <div className="detail-gallery">
             <div className="detail-main-img">
               <button type="button" className="detail-back-btn" aria-label="Go back" title="Back" onClick={() => navigate(window.history.state?.idx > 0 ? -1 : '/shop')}>
-                <span aria-hidden="true">←</span>
+                <FiArrowLeft aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className={`detail-wishlist${liked ? ' active' : ''}`}
+                title={liked ? 'Remove from liked' : 'Add to liked'}
+                aria-label={liked ? 'Remove from liked' : 'Add to liked'}
+                aria-pressed={liked}
+                onClick={handleToggleLike}
+              >
+                <FiHeart aria-hidden="true" />
               </button>
               <img src={activeImage || product.image} alt={product.name} />
             </div>
@@ -202,18 +244,38 @@ export default function ProductDetail() {
 
           {/* Info */}
           <div>
-            <p className="detail-brand">ZiiShe</p>
+            <div className="detail-brand-row">
+              <p className="detail-brand">ZiiShe</p>
+              {product.code && <span className="detail-code">#{product.code}</span>}
+            </div>
             <h1 className="detail-title">{product.name}</h1>
 
             {/* Rating */}
             <div className="detail-rating">
-              <span className="stars">{'★'.repeat(Math.round(product.rating || 0))}{'☆'.repeat(5 - Math.round(product.rating || 0))}</span>
-              <span style={{ fontSize: '0.85rem', color: 'var(--gray)' }}>
-                ({product.numReviews} {product.numReviews === 1 ? 'review' : 'reviews'})
-              </span>
+              {reviewCount > 0 ? (
+                <>
+                  <StarRating rating={averageRating} />
+                  <span style={{ fontSize: '0.85rem', color: 'var(--gray)' }}>
+                    ({reviewCount} {reviewCount === 1 ? 'review' : 'reviews'})
+                  </span>
+                </>
+              ) : (
+                <span style={{ fontSize: '0.85rem', color: 'var(--gray)' }}>No reviews yet</span>
+              )}
             </div>
 
-            <div className="detail-price">{formatPrice(product.price)}</div>
+            <div className="detail-price-block">
+              <span className="detail-price">{formatPrice(product.price)}</span>
+              {discount && (
+                <>
+                  <span className="detail-mrp">{formatPrice(discount.mrp)}</span>
+                  <span className="detail-off">{discount.percent}% off</span>
+                </>
+              )}
+            </div>
+            {discount && (
+              <p className="detail-save">You save {formatPrice(discount.save)}</p>
+            )}
 
             {/* Color Selector */}
             {product.colors?.length > 0 && (
@@ -282,7 +344,7 @@ export default function ProductDetail() {
               >
                 {product.stock === 0 ? 'Out of Stock' : 'Add to Cart'}
               </button>
-              <button className="btn btn-outline" style={{ padding: '1rem 1.5rem' }} title="Add to Wishlist">♡</button>
+
             </div>
 
             {/* Description */}
@@ -291,6 +353,7 @@ export default function ProductDetail() {
               <p>{product.description}</p>
               <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {[
+                  ['Product ID', product.code ? `#${product.code}` : ''],
                   ['Category', product.category],
                   ['Available Sizes', product.sizes?.join(', ')],
                   ['Available Colors', product.colors?.join(', ')],
@@ -327,7 +390,7 @@ export default function ProductDetail() {
             <p className="delivery-msg error">{delivery.error}</p>
           ) : (
             <div className="delivery-msg ok">
-              <p>✓ Delivers to <strong>{delivery.pin}</strong> by <strong>{delivery.eta}</strong></p>
+              <p className="delivery-line"><FiCheck aria-hidden="true" /> Delivers to <strong>{delivery.pin}</strong> by <strong>{delivery.eta}</strong></p>
               <p className="delivery-sub">Free shipping · Easy returns</p>
             </div>
           ))}
@@ -338,12 +401,16 @@ export default function ProductDetail() {
           <div className="reviews-head">
             <h2 className="reviews-title">Reviews</h2>
             <div className="reviews-summary">
-              <span className="stars">{'★'.repeat(Math.round(product.rating || 0))}{'☆'.repeat(5 - Math.round(product.rating || 0))}</span>
-              <span>
-                {product.numReviews > 0
-                  ? `${(product.rating || 0).toFixed(1)} out of 5 · ${product.numReviews} ${product.numReviews === 1 ? 'review' : 'reviews'}`
-                  : 'No reviews yet'}
-              </span>
+              {reviewCount > 0 ? (
+                <>
+                  <StarRating rating={averageRating} />
+                  <span>
+                    {averageRating.toFixed(1)} out of 5 · {reviewCount} {reviewCount === 1 ? 'review' : 'reviews'}
+                  </span>
+                </>
+              ) : (
+                <span>No reviews yet</span>
+              )}
             </div>
           </div>
 
@@ -357,7 +424,7 @@ export default function ProductDetail() {
                       <span className="review-avatar">{(r.name || '?')[0].toUpperCase()}</span>
                       <div>
                         <p className="review-name">{r.name}</p>
-                        <span className="review-stars">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                        <StarRating rating={r.rating} className="review-stars" />
                       </div>
                       <time className="review-date">
                         {new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -385,7 +452,7 @@ export default function ProductDetail() {
                         onClick={() => setRating(n)}
                         aria-label={`${n} star${n > 1 ? 's' : ''}`}
                       >
-                        ★
+                        <FiStar aria-hidden="true" />
                       </button>
                     ))}
                   </div>
@@ -427,7 +494,7 @@ export default function ProductDetail() {
                   aria-label="Scroll left"
                   title="Previous"
                 >
-                  ‹
+                  <FiChevronLeft aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -436,7 +503,7 @@ export default function ProductDetail() {
                   aria-label="Scroll right"
                   title="Next"
                 >
-                  ›
+                  <FiChevronRight aria-hidden="true" />
                 </button>
               </div>
             </div>

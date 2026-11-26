@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { formatPrice, getDiscount } from '../utils/helpers';
 
 export default function GalleryCarousel({ products = [] }) {
   const items = Array.isArray(products) ? products.filter(Boolean) : [];
@@ -34,7 +36,9 @@ export default function GalleryCarousel({ products = [] }) {
       }}
     >
       <div className="gallery-slider" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
-        {items.map((product) => (
+        {items.map((product) => {
+          const discount = getDiscount(product);
+          return (
           <article className="gallery-slide" key={product._id || product.id || product.name}>
             <Link to={`/product/${product._id || product.id}`} className="gallery-slide-link" aria-label={`View ${product.name}`}>
               <img src={product.image} alt={product.name || 'Featured product'} />
@@ -42,20 +46,31 @@ export default function GalleryCarousel({ products = [] }) {
               <div className="gallery-slide-copy">
                 <span className="gallery-slide-category">{product.category || 'ZiiShe Collection'}</span>
                 <h3>{product.name}</h3>
-                {product.price != null && <span className="gallery-slide-price">₹{Number(product.price).toLocaleString('en-IN')}</span>}
+                {product.price != null && (
+                  <span className="gallery-slide-price-row">
+                    <span className="gallery-slide-price">{formatPrice(product.price)}</span>
+                    {discount && (
+                      <>
+                        <span className="gallery-slide-mrp">{formatPrice(discount.mrp)}</span>
+                        <span className="gallery-slide-off">{discount.percent}% off</span>
+                      </>
+                    )}
+                  </span>
+                )}
               </div>
             </Link>
           </article>
-        ))}
+          );
+        })}
       </div>
 
       {items.length > 1 && (
         <>
           <button type="button" className="gallery-nav-btn gallery-nav-prev" onClick={() => show(activeIndex - 1)} aria-label="Previous product">
-            <span aria-hidden="true">‹</span>
+            <FiChevronLeft aria-hidden="true" />
           </button>
           <button type="button" className="gallery-nav-btn gallery-nav-next" onClick={() => show(activeIndex + 1)} aria-label="Next product">
-            <span aria-hidden="true">›</span>
+            <FiChevronRight aria-hidden="true" />
           </button>
           <div className="gallery-controls">
             <div className="gallery-dots" aria-label="Choose a product">

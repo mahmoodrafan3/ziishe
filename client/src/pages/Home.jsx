@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import Navbar from '../components/Navbar';
@@ -7,6 +7,10 @@ import GalleryCarousel from '../components/GalleryCarousel';
 import ProductCard from '../components/ProductCard';
 import Footer from '../components/Footer';
 import { useReveal } from '../hooks/useReveal';
+import useLiveUpdates from '../hooks/useLiveUpdates';
+import { formatPrice, getDiscount } from '../utils/helpers';
+import StarRating from '../components/StarRating';
+import { FiArrowUpRight, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 
 const sampleReviews = [
   { _id: 'sample-1', name: 'Ananya M.', rating: 5, comment: 'The fit is beautiful and the fabric feels even better in person. This has quickly become my go-to layer.', productName: 'Void Oversized Hoodie', sample: true },
@@ -15,64 +19,62 @@ const sampleReviews = [
 ];
 
 export default function Home() {
-  const [featured, setFeatured] = useState([]);
+  const [products, setProducts] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [activeReviewIndex, setActiveReviewIndex] = useState(0);
   const [reviewsPaused, setReviewsPaused] = useState(false);
   const [loading, setLoading] = useState(true);
   const revealRef = useReveal();
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadProducts = async () => {
-      try {
-        const { data } = await axios.get('/api/products?featured=true');
-        let products = Array.isArray(data) ? data : [];
-
-        if (products.length === 0) {
-          const response = await axios.get('/api/products');
-          products = Array.isArray(response.data) ? response.data : [];
-        }
-
-        if (!cancelled) setFeatured(products.slice(0, 6));
-      } catch {
-        try {
-          const { data } = await axios.get('/api/products');
-          if (!cancelled) setFeatured(Array.isArray(data) ? data.slice(0, 6) : []);
-        } catch {
-          if (!cancelled) setFeatured([]);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    loadProducts();
-    return () => { cancelled = true; };
+  // One catalogue request feeds both the home sections and the review wall.
+  const loadCatalogue = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/products');
+      const list = Array.isArray(data) ? data : [];
+      setProducts(list);
+      const postedReviews = list.flatMap((product) =>
+        (Array.isArray(product.reviews) ? product.reviews : []).map((review) => ({
+          ...review,
+          productName: product.name,
+          productImage: product.image,
+          productId: product._id,
+        }))
+      ).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      setReviews(postedReviews.slice(0, 6));
+    } catch {
+      setProducts([]);
+      setReviews([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    axios.get('/api/products')
-      .then(({ data }) => {
-        const postedReviews = (Array.isArray(data) ? data : []).flatMap((product) =>
-          (Array.isArray(product.reviews) ? product.reviews : []).map((review) => ({
-            ...review,
-            productName: product.name,
-            productImage: product.image,
-            productId: product._id,
-          }))
-        ).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-        if (!cancelled) setReviews(postedReviews.slice(0, 6));
-      })
-      .catch(() => { if (!cancelled) setReviews([]); });
-    return () => { cancelled = true; };
-  }, []);
+  useEffect(() => { loadCatalogue(); }, [loadCatalogue]);
 
-  const editorialProducts = featured.slice(0, 4);
+  // Admin edits show up here without a page refresh.
+  useLiveUpdates(loadCatalogue);
+
+  // Home sections come from the section ticks set in the admin product editor.
+  // Until any product has placements, fall back to the featured products (or
+  // the whole catalogue) so the storefront never renders empty sections.
+  const inSection = (placement) =>
+    products.filter((product) => Array.isArray(product.placements) && product.placements.includes(placement));
+  const hasPlacements = products.some(
+    (product) => Array.isArray(product.placements) && product.placements.length > 0
+  );
+  const featuredProducts = products.filter((product) => product.featured);
+  const fallbackProducts = featuredProducts.length ? featuredProducts : products;
+
+  const heroProducts = hasPlacements ? inSection('hero') : fallbackProducts;
+  const editorialProducts = (hasPlacements ? inSection('curated') : fallbackProducts).slice(0, 4);
+  const essentialsProducts = (hasPlacements ? inSection('essentials') : fallbackProducts).slice(0, 3);
   const displayedReviews = reviews.length ? reviews : sampleReviews;
   const activeReview = displayedReviews[activeReviewIndex % displayedReviews.length];
+  // Sample reviews have no product id, so match them to the catalogue by name.
+  const activeReviewProductId =
+    activeReview?.productId ||
+    (activeReview?.sample ? products.find((product) => product.name === activeReview.productName)?._id : null);
+  const ReviewCard = activeReviewProductId ? Link : 'article';
   const categories = [
     { name: 'Dresses', image: '/images/product_dress.png', label: '01' },
     { name: 'Hoodies', image: '/images/product_hoodie.png', label: '02' },
@@ -97,7 +99,7 @@ export default function Home() {
   return (
     <div>
       <Navbar />
-      <Hero3D />
+      <Hero3D products={heroProducts} />
 
       <section className="section" ref={revealRef} style={{ background: 'var(--cream)' }}>
         <div className="container">
@@ -116,15 +118,27 @@ export default function Home() {
           ) : editorialProducts.length > 0 ? (
             <>
               <div className="editorial-grid editorial-grid-desktop reveal">
-                {editorialProducts.map((product, i) => (
-                  <Link to={`/product/${product._id}`} key={product._id} className={`editorial-card${i === 0 ? ' large' : ''}`}>
-                    <img src={product.image} alt={product.name} />
-                    <div className="editorial-overlay">
-                      <p className="editorial-tag">{product.category}</p>
-                      <h3 className="editorial-name">{product.name}</h3>
-                    </div>
-                  </Link>
-                ))}
+                {editorialProducts.map((product, i) => {
+                  const discount = getDiscount(product);
+                  return (
+                    <Link to={`/product/${product._id}`} key={product._id} className={`editorial-card${i === 0 ? ' large' : ''}`}>
+                      <img src={product.image} alt={product.name} />
+                      <div className="editorial-overlay">
+                        <p className="editorial-tag">{product.category}</p>
+                        <h3 className="editorial-name">{product.name}</h3>
+                        <p className="editorial-price-row">
+                          <span className="editorial-price">{formatPrice(product.price)}</span>
+                          {discount && (
+                            <>
+                              <span className="editorial-mrp">{formatPrice(discount.mrp)}</span>
+                              <span className="editorial-off">{discount.percent}% off</span>
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
               <div className="editorial-mobile-gallery">
                 <GalleryCarousel products={editorialProducts} />
@@ -154,7 +168,7 @@ export default function Home() {
                 <span className="category-tile-number">{label}</span>
                 <span className="category-tile-caption">
                   <span className="category-tile-name">{name}</span>
-                  <span className="category-tile-link">Discover <span aria-hidden="true">↗</span></span>
+                  <span className="category-tile-link">Discover <FiArrowUpRight aria-hidden="true" /></span>
                 </span>
               </Link>
             ))}
@@ -174,9 +188,9 @@ export default function Home() {
                 <div key={i} className="skeleton" style={{ aspectRatio: '3/4', borderRadius: '8px' }} />
               ))}
             </div>
-          ) : featured.length > 0 ? (
+          ) : essentialsProducts.length > 0 ? (
             <div className="products-grid">
-              {featured.slice(0, 3).map((product, i) => (
+              {essentialsProducts.map((product, i) => (
                 <ProductCard key={product._id} product={product} delay={i + 1} />
               ))}
             </div>
@@ -206,15 +220,17 @@ export default function Home() {
               if (!event.currentTarget.contains(event.relatedTarget)) setReviewsPaused(false);
             }}
           >
-            <article className="customer-review-card reveal" key={activeReview._id} aria-live="polite">
+            <ReviewCard
+              className="customer-review-card reveal"
+              key={activeReview._id}
+              aria-live="polite"
+              {...(activeReviewProductId ? { to: `/product/${activeReviewProductId}` } : {})}
+            >
                   <div className="customer-review-topline">
-                    <span className="customer-review-stars" aria-label={`${activeReview.rating} out of 5 stars`}>
-                      {'★'.repeat(Math.max(0, Math.min(5, Math.round(activeReview.rating || 0))))}
-                      <span>{'☆'.repeat(5 - Math.max(0, Math.min(5, Math.round(activeReview.rating || 0))))}</span>
-                    </span>
+                    <StarRating rating={activeReview.rating} className="customer-review-stars" />
                     <span className="customer-review-product">
                       {activeReview.sample && <span className="customer-review-sample">Sample · </span>}
-                      {activeReview.productId ? <Link to={`/product/${activeReview.productId}`}>{activeReview.productName}</Link> : activeReview.productName}
+                      {activeReview.productName}
                     </span>
                   </div>
                   <p className="customer-review-comment">“{activeReview.comment}”</p>
@@ -225,10 +241,10 @@ export default function Home() {
                       {activeReview.createdAt && <time dateTime={activeReview.createdAt}>{new Date(activeReview.createdAt).toLocaleDateString()}</time>}
                     </div>
                   </div>
-            </article>
+            </ReviewCard>
             {displayedReviews.length > 1 && (
               <div className="customer-review-controls">
-                <button type="button" className="customer-review-arrow" onClick={() => setActiveReviewIndex((index) => (index - 1 + displayedReviews.length) % displayedReviews.length)} aria-label="Previous review">‹</button>
+                <button type="button" className="customer-review-arrow" onClick={() => setActiveReviewIndex((index) => (index - 1 + displayedReviews.length) % displayedReviews.length)} aria-label="Previous review"><FiChevronLeft aria-hidden="true" /></button>
                 <div className="customer-review-dots" aria-label="Choose a review">
                   {displayedReviews.map((review, index) => (
                     <button
@@ -241,7 +257,7 @@ export default function Home() {
                     />
                   ))}
                 </div>
-                <button type="button" className="customer-review-arrow" onClick={() => setActiveReviewIndex((index) => (index + 1) % displayedReviews.length)} aria-label="Next review">›</button>
+                <button type="button" className="customer-review-arrow" onClick={() => setActiveReviewIndex((index) => (index + 1) % displayedReviews.length)} aria-label="Next review"><FiChevronRight aria-hidden="true" /></button>
               </div>
             )}
           </div>

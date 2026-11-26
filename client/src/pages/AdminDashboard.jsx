@@ -1,13 +1,18 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { getAdminAuthHeader, formatPrice, statusColor } from '../utils/helpers';
+import useLiveUpdates from '../hooks/useLiveUpdates';
+import CategoryManager from '../components/CategoryManager';
+import CouponEditor from '../components/CouponEditor';
 import {
   FiGrid, FiPackage, FiShoppingBag, FiTrendingUp, FiDollarSign, FiClock,
-  FiSearch, FiDownload, FiEdit2, FiTrash2, FiPlus, FiX, FiImage,
+  FiSearch, FiDownload, FiEdit2, FiTrash2, FiPlus, FiImage,
   FiLogOut, FiArrowLeft, FiArrowUpRight, FiChevronDown, FiInbox,
+  FiLayout, FiEyeOff, FiInfo, FiSettings, FiTool, FiAlertTriangle, FiTag,
+  FiPercent,
 } from 'react-icons/fi';
 
 /* ── Small helpers ─────────────────────────────────────────── */
@@ -16,12 +21,40 @@ const NAV = [
   { key: 'Overview', label: 'Overview', icon: FiGrid },
   { key: 'Products', label: 'Products', icon: FiPackage },
   { key: 'Orders',   label: 'Orders',   icon: FiShoppingBag },
+  { key: 'Coupons',  label: 'Coupons',  icon: FiPercent },
+  { key: 'Home',     label: 'Home page', icon: FiLayout },
+  { key: 'Settings', label: 'Settings', icon: FiSettings },
 ];
+
+// Home page sections driven by each product's `placements` field. `limit` is
+// how many the storefront actually renders (extra ticks are still saved).
+const HOME_SECTIONS = [
+  {
+    key: 'hero',
+    label: 'Hero section',
+    title: 'Animated hero',
+    note: 'Full-bleed photos at the top. They fade every 5 seconds and each photo opens its product.',
+    limit: null,
+  },
+  {
+    key: 'curated',
+    label: '2nd section',
+    title: 'Curated for Her',
+    note: 'Editorial grid under the hero. The first photo in the list is the large one.',
+    limit: 4,
+  },
+  {
+    key: 'essentials',
+    label: 'Last section',
+    title: 'Wardrobe Essentials',
+    note: 'Three-up product cards near the bottom of the home page.',
+    limit: 3,
+  },
+];
+const SECTION_LABELS = Object.fromEntries(HOME_SECTIONS.map(({ key, label }) => [key, label]));
 
 const STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
 const STATUSES_SET = new Set(STATUSES);
-// Gallery photos beyond the main one — must match the API's limit.
-const MAX_EXTRA_PHOTOS = 6;
 const ORDER_STATUSES = ['All', ...STATUSES];
 
 const formatDate = (date, withTime = false) => {
@@ -175,10 +208,11 @@ function EmptyState({ icon: Icon = FiInbox, title, text, action }) {
 /* ── Main component ────────────────────────────────────────── */
 
 export default function AdminDashboard() {
-  const { admin, adminLogout } = useAdminAuth();
+  const { admin, adminLogout, loading: adminLoading } = useAdminAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const [tab, setTab] = useState('Overview');
+  const [tab, setTab] = useState(location.state?.tab || 'Overview');
   const [navOpen, setNavOpen] = useState(false);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -192,20 +226,34 @@ export default function AdminDashboard() {
   const [orderQuery, setOrderQuery] = useState('');
   const [orderStatus, setOrderStatus] = useState('All');
   const [orderSort, setOrderSort] = useState({ field: 'createdAt', dir: 'desc' });
-
-  // product editor
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editProduct, setEditProduct] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', price: '', category: '', image: '', imageFile: null, extras: [], sizes: '', colors: '', stock: '', featured: false });
-  const fileInputRef = useRef(null);
-  const objectUrlRef = useRef(null);
+  // home page preview
+  const [placementPick, setPlacementPick] = useState({});
+  const [placementSavingId, setPlacementSavingId] = useState(null);
+  // category manager dialog
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  // coupons
+  const [coupons, setCoupons] = useState([]);
+  const [couponModalOpen, setCouponModalOpen] = useState(false);
+  const [couponEditing, setCouponEditing] = useState(null);
+  // storefront status switches
+  const [settingsForm, setSettingsForm] = useState({
+    maintenanceEnabled: false,
+    maintenanceMessage: '',
+    issueEnabled: false,
+    issueMessage: '',
+  });
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   useEffect(() => {
+    // Wait until the stored admin session has been read, otherwise a refresh
+    // bounces to the login page before the context has loaded it.
+    if (adminLoading) return;
     if (!admin) { navigate('/admin/login', { replace: true }); return; }
     fetchData();
+    loadSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [admin]);
+  }, [admin, adminLoading]);
 
   // Lock body scroll while the mobile rail is open.
   useEffect(() => {
@@ -213,22 +261,86 @@ export default function AdminDashboard() {
     return () => { document.body.style.overflow = ''; };
   }, [navOpen]);
 
-  // Release the object URL backing the image preview when it's replaced/unmounted.
-  useEffect(() => () => { if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current); }, []);
+  // A new order pushed over the live connection lands here without a reload.
+  useLiveUpdates((event) => {
+    if (!admin || event?.type === 'settings') return;
+    if (event?.type === 'orders' && event.action === 'created') {
+      toast.success(
+        `New order from ${event.customer || 'a customer'} · ${formatPrice(event.totalPrice || 0)}`,
+        { id: event.id },
+      );
+    }
+    // Silent so the dashboard never flashes its skeleton on a live update.
+    fetchData({ silent: true });
+  });
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
-      const [pRes, oRes] = await Promise.all([
+      const [pRes, oRes, cRes] = await Promise.all([
         axios.get('/api/products'),
         axios.get('/api/orders', { headers: getAdminAuthHeader() }),
+        axios.get('/api/coupons', { headers: getAdminAuthHeader() }),
       ]);
       setProducts(Array.isArray(pRes.data) ? pRes.data : []);
       setOrders(Array.isArray(oRes.data) ? oRes.data : []);
-    } catch {
+      setCoupons(Array.isArray(cRes.data) ? cRes.data : []);
+    } catch (err) {
+      // An expired or rejected admin token is not a data problem — send the
+      // admin back to sign in instead of showing an endless "failed to load".
+      const status = err.response?.status;
+      if (status === 401 || status === 403) {
+        toast.error('Admin session expired — please sign in again');
+        adminLogout();
+        navigate('/admin/login', { replace: true });
+        return;
+      }
+      console.error('[admin] failed to load data:', err.response?.data?.message || err.message);
       toast.error('Failed to load data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadSettings = async () => {
+    try {
+      const { data } = await axios.get('/api/settings');
+      setSettingsForm({
+        maintenanceEnabled: Boolean(data.maintenanceEnabled),
+        maintenanceMessage: data.maintenanceMessage || '',
+        issueEnabled: Boolean(data.issueEnabled),
+        issueMessage: data.issueMessage || '',
+      });
+    } catch {
+      // Non-fatal: the panel falls back to defaults and can still save.
+      toast.error('Could not load store settings');
+    } finally {
+      setSettingsLoaded(true);
+    }
+  };
+
+  const saveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      const { data } = await axios.put('/api/settings', settingsForm, { headers: getAdminAuthHeader() });
+      setSettingsForm({
+        maintenanceEnabled: Boolean(data.maintenanceEnabled),
+        maintenanceMessage: data.maintenanceMessage || '',
+        issueEnabled: Boolean(data.issueEnabled),
+        issueMessage: data.issueMessage || '',
+      });
+      toast.success('Storefront settings saved');
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 401 || status === 403) {
+        toast.error('Admin session expired — please sign in again');
+        adminLogout();
+        navigate('/admin/login', { replace: true });
+        return;
+      }
+      toast.error(err.response?.data?.message || 'Failed to save settings');
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -241,136 +353,8 @@ export default function AdminDashboard() {
 
   /* ── Product editor ── */
 
-  const openModal = (product = null) => {
-    if (product) {
-      setEditProduct(product);
-      // Gallery photos, minus the main one (which has its own field).
-      const photos = [...new Set([product.image, ...(product.images || [])].filter(Boolean))];
-      setForm({
-        name: product.name ?? '', description: product.description ?? '', price: product.price ?? '',
-        category: product.category ?? '', image: product.image ?? '', imageFile: null,
-        extras: photos.slice(1).map((url) => ({ url, file: null })),
-        sizes: (product.sizes || []).join(', '), colors: (product.colors || []).join(', '),
-        stock: product.stock ?? '', featured: Boolean(product.featured),
-      });
-    } else {
-      setEditProduct(null);
-      setForm({ name: '', description: '', price: '', category: '', image: '', imageFile: null, extras: [], sizes: '', colors: '', stock: '', featured: false });
-    }
-    setModalOpen(true);
-  };
-
-  const handleFormChange = (e) => {
-    const { name, type, checked, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
-  };
-
-  const handleImageFile = (e) => {
-    const file = e.target.files?.[0] ?? null;
-    if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
-    if (file) {
-      const url = URL.createObjectURL(file);
-      objectUrlRef.current = url;
-      setForm((prev) => ({ ...prev, imageFile: file, image: url }));
-    } else {
-      setForm((prev) => ({ ...prev, imageFile: null }));
-    }
-  };
-
-  const handleGalleryFiles = (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    if (!files.length) return;
-    const room = MAX_EXTRA_PHOTOS - form.extras.length;
-    if (room <= 0) {
-      toast.error(`A product can have up to ${MAX_EXTRA_PHOTOS} extra photos`);
-      return;
-    }
-    if (files.length > room) toast.error(`Only ${room} more photo${room === 1 ? '' : 's'} can be added`);
-    setForm((prev) => ({
-      ...prev,
-      extras: [
-        ...prev.extras,
-        ...files.slice(0, room).map((file) => ({ url: URL.createObjectURL(file), file })),
-      ],
-    }));
-  };
-
-  const removeExtra = (index) => {
-    setForm((prev) => {
-      const target = prev.extras[index];
-      if (target?.file) URL.revokeObjectURL(target.url);
-      return { ...prev, extras: prev.extras.filter((_, i) => i !== index) };
-    });
-  };
-
-  const revokeExtras = (extras = []) => {
-    extras.forEach((item) => { if (item?.file) URL.revokeObjectURL(item.url); });
-  };
-
-  const clearImage = () => {
-    if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
-    setForm((prev) => ({ ...prev, imageFile: null, image: '' }));
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!form.name || !form.category || !form.price || !form.stock) {
-      toast.error('Please fill in Name, Category, Price and Stock');
-      return;
-    }
-    if (!form.image && !form.imageFile) {
-      toast.error('Please add a product image or paste an image URL');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const payload = new FormData();
-      payload.append('name', form.name);
-      payload.append('description', form.description);
-      payload.append('price', form.price);
-      payload.append('category', form.category);
-      payload.append('sizes', JSON.stringify(form.sizes.split(',').map((s) => s.trim()).filter(Boolean)));
-      payload.append('colors', JSON.stringify(form.colors.split(',').map((s) => s.trim()).filter(Boolean)));
-      payload.append('stock', form.stock);
-      payload.append('featured', form.featured.toString());
-
-      if (form.imageFile) {
-        payload.append('image', form.imageFile);
-      } else if (typeof form.image === 'string' && form.image) {
-        payload.append('image', form.image);
-      }
-
-      // Extra photos: keep the ones already uploaded, then send new files in order.
-      payload.append('images', JSON.stringify(form.extras.filter((item) => !item.file).map((item) => item.url)));
-      form.extras.filter((item) => item.file).forEach((item) => payload.append('images', item.file));
-
-      if (editProduct) {
-        await axios.put(`/api/products/${editProduct._id}`, payload, {
-          headers: { ...getAdminAuthHeader(), 'Content-Type': 'multipart/form-data' },
-        });
-        toast.success('Product updated!');
-      } else {
-        await axios.post('/api/products', payload, {
-          headers: { ...getAdminAuthHeader(), 'Content-Type': 'multipart/form-data' },
-        });
-        toast.success('Product created!');
-      }
-      closeModal();
-      fetchData();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to save');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const closeModal = () => {
-    if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    revokeExtras(form.extras);
-    setModalOpen(false);
+  const openEditor = (product = null) => {
+    navigate(product ? `/admin/products/${product._id}/edit` : '/admin/products/new');
   };
 
   const handleDelete = async (id) => {
@@ -382,6 +366,83 @@ export default function AdminDashboard() {
     } catch {
       toast.error('Failed to delete');
     }
+  };
+
+  /* ── Home page sections ── */
+
+  const savePlacements = async (product, placements, message) => {
+    const previous = product.placements || [];
+    setProducts((prev) => prev.map((p) => (p._id === product._id ? { ...p, placements } : p)));
+    setPlacementSavingId(product._id);
+    try {
+      await axios.patch(
+        `/api/products/${product._id}/placements`,
+        { placements },
+        { headers: getAdminAuthHeader() },
+      );
+      toast.success(message);
+    } catch (err) {
+      setProducts((prev) => prev.map((p) => (p._id === product._id ? { ...p, placements: previous } : p)));
+      toast.error(err.response?.data?.message || 'Failed to update sections');
+    } finally {
+      setPlacementSavingId(null);
+    }
+  };
+
+  const addToSection = (product, sectionKey) => {
+    if (!product) return;
+    if ((product.placements || []).includes(sectionKey)) return;
+    savePlacements(
+      product,
+      [...(product.placements || []), sectionKey],
+      `${product.name} added to ${SECTION_LABELS[sectionKey]}`,
+    );
+  };
+
+  const removeFromSection = (product, sectionKey) => {
+    savePlacements(
+      product,
+      (product.placements || []).filter((key) => key !== sectionKey),
+      `${product.name} removed from ${SECTION_LABELS[sectionKey]}`,
+    );
+  };
+
+  /* ── Coupons ── */
+
+  const openCouponEditor = (coupon = null) => {
+    setCouponEditing(coupon);
+    setCouponModalOpen(true);
+  };
+
+  const handleCouponDelete = async (coupon) => {
+    if (!window.confirm(`Delete coupon ${coupon.code}?`)) return;
+    try {
+      await axios.delete(`/api/coupons/${coupon._id}`, { headers: getAdminAuthHeader() });
+      setCoupons((prev) => prev.filter((item) => item._id !== coupon._id));
+      toast.success('Coupon deleted');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to delete coupon');
+    }
+  };
+
+  const couponStatus = (coupon) => {
+    if (!coupon.active) return { label: 'Inactive', className: 'status-cancelled' };
+    if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) {
+      return { label: 'Expired', className: 'status-pending' };
+    }
+    return { label: 'Active', className: 'status-shipped' };
+  };
+
+  const couponScope = (coupon) => {
+    if (coupon.scope === 'products') {
+      const count = (coupon.products || []).length;
+      return `${count} product${count === 1 ? '' : 's'}`;
+    }
+    if (coupon.scope === 'categories') {
+      const names = coupon.categories || [];
+      return names.length ? names.join(', ') : 'No category';
+    }
+    return 'Whole cart';
   };
 
   const handleOrderStatus = async (id, status) => {
@@ -506,6 +567,18 @@ export default function AdminDashboard() {
 
   const toggleSort = (setter, field) => setter((prev) => (prev.field === field ? { field, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { field, dir: 'asc' }));
 
+  /* ── Home page preview data ── */
+
+  const sectionProducts = useMemo(() => {
+    const map = {};
+    HOME_SECTIONS.forEach(({ key }) => {
+      map[key] = products.filter((p) => (p.placements || []).includes(key));
+    });
+    return map;
+  }, [products]);
+
+  const hasPlacements = products.some((p) => (p.placements || []).length > 0);
+
   const exportOrdersCsv = () => {
     downloadCsv(
       [
@@ -606,7 +679,7 @@ export default function AdminDashboard() {
                       <h1>Welcome back, {firstName(admin.name)}</h1>
                       <p>Here's how ZiiShe is performing right now.</p>
                     </div>
-                    <button type="button" className="adm-btn adm-btn-solid" onClick={() => switchTab('Products')}>
+                    <button type="button" className="adm-btn adm-btn-solid" onClick={() => openEditor()}>
                       <FiPlus /> Add product
                     </button>
                   </div>
@@ -740,9 +813,10 @@ export default function AdminDashboard() {
                       <h1>Products</h1>
                       <p>{overview.productCount} products{overview.outOfStock > 0 ? ` · ${overview.outOfStock} out of stock` : ''}{overview.lowStock > 0 ? ` · ${overview.lowStock} low stock` : ''}</p>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.6rem' }}>
+                    <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
                       <button type="button" className="adm-btn adm-btn-ghost" onClick={exportProductsCsv} disabled={!filteredProducts.length}><FiDownload /> Export</button>
-                      <button type="button" className="adm-btn adm-btn-solid" onClick={() => openModal()}><FiPlus /> Add product</button>
+                      <button type="button" className="adm-btn adm-btn-ghost" onClick={() => setCategoryModalOpen(true)}><FiTag /> Edit categories</button>
+                      <button type="button" className="adm-btn adm-btn-solid" onClick={() => openEditor()}><FiPlus /> Add product</button>
                     </div>
                   </div>
 
@@ -764,6 +838,7 @@ export default function AdminDashboard() {
                           <thead>
                             <tr>
                               <SortHeader label="Product" field="name" sort={productSort} onSort={(f) => toggleSort(setProductSort, f)} />
+                              <th>ID</th>
                               <SortHeader label="Category" field="category" sort={productSort} onSort={(f) => toggleSort(setProductSort, f)} />
                               <SortHeader label="Price" field="price" sort={productSort} onSort={(f) => toggleSort(setProductSort, f)} />
                               <SortHeader label="Stock" field="stock" sort={productSort} onSort={(f) => toggleSort(setProductSort, f)} />
@@ -786,14 +861,20 @@ export default function AdminDashboard() {
                                     </span>
                                   </div>
                                 </td>
+                                <td><span className="adm-code">{p.code ? `#${p.code}` : '—'}</span></td>
                                 <td><span className="adm-chip">{p.category || '—'}</span></td>
-                                <td className="adm-money">{formatPrice(p.price)}</td>
+                                <td className="adm-money">
+                                  {formatPrice(p.price)}
+                                  {Number(p.mrp) > Number(p.price) && (
+                                    <span className="adm-money-mrp">{formatPrice(p.mrp)}</span>
+                                  )}
+                                </td>
                                 <td>
                                   <span className={`adm-stock${(p.stock || 0) <= 0 ? ' out' : p.stock < 5 ? ' low' : ''}`}><i /> {p.stock ?? 0}</span>
                                 </td>
                                 <td>
                                   <div className="adm-row-actions">
-                                    <button type="button" className="adm-mini" title="Edit" onClick={() => openModal(p)}><FiEdit2 /></button>
+                                    <button type="button" className="adm-mini" title="Edit" onClick={() => openEditor(p)}><FiEdit2 /></button>
                                     <button type="button" className="adm-mini danger" title="Delete" onClick={() => handleDelete(p._id)}><FiTrash2 /></button>
                                   </div>
                                 </td>
@@ -807,7 +888,7 @@ export default function AdminDashboard() {
                         icon={FiPackage}
                         title={products.length ? 'No products match' : 'No products yet'}
                         text={products.length ? 'Try a different search term or category filter.' : 'Add your first product to start building the catalogue.'}
-                        action={<button type="button" className="adm-btn adm-btn-solid" onClick={() => openModal()}><FiPlus /> Add product</button>}
+                        action={<button type="button" className="adm-btn adm-btn-solid" onClick={() => openEditor()}><FiPlus /> Add product</button>}
                       />
                     )}
                   </div>
@@ -890,133 +971,327 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               )}
+
+              {/* ── Coupons ── */}
+              {tab === 'Coupons' && (
+                <div className="adm-page">
+                  <div className="adm-head">
+                    <div>
+                      <span className="adm-eyebrow">Promotions</span>
+                      <h1>Coupons</h1>
+                      <p>{coupons.length} coupon{coupons.length === 1 ? '' : 's'} · {coupons.filter((c) => couponStatus(c).label === 'Active').length} active right now</p>
+                    </div>
+                    <button type="button" className="adm-btn adm-btn-solid" onClick={() => openCouponEditor()}>
+                      <FiPlus /> Create coupon
+                    </button>
+                  </div>
+
+                  <div className="adm-card">
+                    {coupons.length ? (
+                      <div className="adm-table-wrap">
+                        <table className="adm-table">
+                          <thead>
+                            <tr>
+                              <th>Code</th>
+                              <th>Discount</th>
+                              <th>Applies to</th>
+                              <th>Min. order</th>
+                              <th>Status</th>
+                              <th>Expires</th>
+                              <th style={{ textAlign: 'right' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {coupons.map((coupon) => {
+                              const status = couponStatus(coupon);
+                              return (
+                                <tr key={coupon._id}>
+                                  <td>
+                                    <span className="adm-oid">{coupon.code}</span>
+                                    {coupon.description && <div className="adm-muted">{coupon.description}</div>}
+                                  </td>
+                                  <td className="adm-money">
+                                    {coupon.type === 'percent' ? `${coupon.value}% off` : `${formatPrice(coupon.value)} off`}
+                                  </td>
+                                  <td>
+                                    <span className="adm-chip" title={couponScope(coupon)}>{couponScope(coupon)}</span>
+                                  </td>
+                                  <td className="adm-muted">{coupon.minSubtotal ? formatPrice(coupon.minSubtotal) : '—'}</td>
+                                  <td><span className={`adm-pill ${status.className}`}><i /> {status.label}</span></td>
+                                  <td className="adm-muted">{coupon.expiresAt ? formatDate(coupon.expiresAt) : 'No expiry'}</td>
+                                  <td>
+                                    <div className="adm-row-actions">
+                                      <button type="button" className="adm-mini" title="Edit coupon" onClick={() => openCouponEditor(coupon)}><FiEdit2 /></button>
+                                      <button type="button" className="adm-mini danger" title="Delete coupon" onClick={() => handleCouponDelete(coupon)}><FiTrash2 /></button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <EmptyState
+                        icon={FiPercent}
+                        title="No coupons yet"
+                        text="Create a code and pick whether it discounts the whole cart, certain products or a category."
+                        action={<button type="button" className="adm-btn adm-btn-solid" onClick={() => openCouponEditor()}><FiPlus /> Create coupon</button>}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Home page preview ── */}
+              {tab === 'Home' && (
+                <div className="adm-page">
+                  <div className="adm-head">
+                    <div>
+                      <span className="adm-eyebrow">Storefront</span>
+                      <h1>Home page preview</h1>
+                      <p>Every product currently showing in each home page section. Add or remove a product here to change what goes live.</p>
+                    </div>
+                    <Link to="/" className="adm-btn adm-btn-ghost"><FiArrowUpRight /> View home page</Link>
+                  </div>
+
+                  {!hasPlacements && (
+                    <p className="adm-note">
+                      <FiInfo aria-hidden="true" />
+                      <span>No product has been ticked for a section yet, so the home page is currently filling every section with featured products. Ticking a product below switches it to manual control.</span>
+                    </p>
+                  )}
+
+                  <div className="adm-home-sections">
+                    {HOME_SECTIONS.map((section) => {
+                      const items = sectionProducts[section.key] || [];
+                      const candidates = products
+                        .filter((p) => !(p.placements || []).includes(section.key))
+                        .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+                      const pick = placementPick[section.key] || '';
+
+                      return (
+                        <div className="adm-card" key={section.key}>
+                          <div className="adm-card-head">
+                            <div>
+                              <p className="adm-card-title">{section.title}</p>
+                              <p className="adm-card-sub">{section.note}</p>
+                            </div>
+                            <span className="adm-chip">
+                              {items.length} {section.limit ? `/ ${section.limit} shown` : items.length === 1 ? 'slide' : 'slides'}
+                            </span>
+                          </div>
+
+                          <div className="adm-home-body">
+                            {items.length ? (
+                              <ol className="adm-home-list">
+                                {items.map((p, index) => {
+                                  const overflow = section.limit ? index >= section.limit : false;
+                                  const elsewhere = (p.placements || [])
+                                    .filter((key) => key !== section.key)
+                                    .map((key) => SECTION_LABELS[key]);
+                                  return (
+                                    <li key={p._id} className={`adm-home-item${overflow ? ' is-overflow' : ''}`}>
+                                      <span className="adm-home-pos">{index + 1}</span>
+                                      {p.image
+                                        ? <OptimizedCloudinaryImage src={p.image} alt={p.name} className="adm-thumb" width="46" height="56" />
+                                        : <span className="adm-thumb adm-thumb-fallback"><FiImage /></span>}
+                                      <span className="adm-home-info">
+                                        <span className="adm-home-name">{p.name}</span>
+                                        <span className="adm-home-meta">{formatPrice(p.price)} · {p.category || 'Uncategorised'}</span>
+                                        {elsewhere.length > 0 && (
+                                          <span className="adm-home-tags">
+                                            {elsewhere.map((label) => <span className="adm-chip" key={label}>Also in {label}</span>)}
+                                          </span>
+                                        )}
+                                        {overflow && (
+                                          <span className="adm-home-warn">Saved, but not visible — the storefront shows the first {section.limit}.</span>
+                                        )}
+                                      </span>
+                                      <span className="adm-home-actions">
+                                        <button type="button" className="adm-mini" title="Edit product" onClick={() => openEditor(p)}><FiEdit2 /></button>
+                                        <button
+                                          type="button"
+                                          className="adm-mini danger"
+                                          title={`Remove from ${section.label}`}
+                                          aria-label={`Remove ${p.name} from ${section.label}`}
+                                          disabled={placementSavingId === p._id}
+                                          onClick={() => removeFromSection(p, section.key)}
+                                        >
+                                          <FiEyeOff />
+                                        </button>
+                                      </span>
+                                    </li>
+                                  );
+                                })}
+                              </ol>
+                            ) : (
+                              <p className="adm-home-empty">
+                                Nothing ticked here yet.{!hasPlacements && ' The storefront is falling back to featured products for now.'}
+                              </p>
+                            )}
+
+                            <div className="adm-home-add">
+                              <select
+                                className="adm-select"
+                                value={pick}
+                                onChange={(e) => setPlacementPick((prev) => ({ ...prev, [section.key]: e.target.value }))}
+                                aria-label={`Add a product to ${section.label}`}
+                                disabled={!candidates.length}
+                              >
+                                <option value="">{candidates.length ? 'Add a product to this section…' : 'Every product is already here'}</option>
+                                {candidates.map((p) => (
+                                  <option key={p._id} value={p._id}>{p.name} — {p.category || 'Uncategorised'}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="adm-btn adm-btn-solid adm-btn-sm"
+                                disabled={!pick || placementSavingId !== null}
+                                onClick={() => {
+                                  addToSection(products.find((p) => p._id === pick), section.key);
+                                  setPlacementPick((prev) => ({ ...prev, [section.key]: '' }));
+                                }}
+                              >
+                                <FiPlus /> Add
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Settings ── */}
+              {tab === 'Settings' && (
+                <div className="adm-page">
+                  <div className="adm-head">
+                    <div>
+                      <span className="adm-eyebrow">Store control</span>
+                      <h1>Settings</h1>
+                      <p>Switch the storefront status pages on or off. Changes reach every open customer tab as soon as you save.</p>
+                    </div>
+                  </div>
+
+                  <p className="adm-note adm-settings-note">
+                    <FiInfo aria-hidden="true" />
+                    <span>While either page is on, customers cannot browse ZiiShe. The admin console stays open so you can always switch it back off.</span>
+                  </p>
+
+                  {!settingsLoaded ? (
+                    <div className="adm-card"><div className="adm-skeleton"><i /><i /><i /></div></div>
+                  ) : (
+                    <>
+                      <div className="adm-settings-grid">
+                        <div className={`adm-card adm-setting${settingsForm.maintenanceEnabled ? ' is-on' : ''}`}>
+                          <div className="adm-setting-head">
+                            <span className="adm-setting-ico"><FiTool /></span>
+                            <div className="adm-setting-copy">
+                              <p className="adm-card-title">Maintenance mode</p>
+                              <p className="adm-card-sub">Replaces the storefront with a “we’ll be right back” page.</p>
+                            </div>
+                            <label className="adm-switch">
+                              <input
+                                type="checkbox"
+                                checked={settingsForm.maintenanceEnabled}
+                                onChange={(e) => setSettingsForm((prev) => ({ ...prev, maintenanceEnabled: e.target.checked }))}
+                                aria-label="Enable maintenance mode"
+                              />
+                              <span aria-hidden="true" />
+                            </label>
+                          </div>
+                          <div className={`adm-setting-state${settingsForm.maintenanceEnabled ? ' on' : ''}`}>
+                            <i /> {settingsForm.maintenanceEnabled ? 'Maintenance page is live' : 'Storefront is open'}
+                          </div>
+                          <label className="adm-setting-field">
+                            <span>Message shown to customers <em>optional</em></span>
+                            <textarea
+                              rows={3}
+                              maxLength={500}
+                              value={settingsForm.maintenanceMessage}
+                              onChange={(e) => setSettingsForm((prev) => ({ ...prev, maintenanceMessage: e.target.value }))}
+                              placeholder="ZiiShe is getting some care behind the scenes. Please check back in a few minutes."
+                            />
+                          </label>
+                        </div>
+
+                        <div className={`adm-card adm-setting${settingsForm.issueEnabled ? ' is-on' : ''}`}>
+                          <div className="adm-setting-head">
+                            <span className="adm-setting-ico adm-setting-ico--issue"><FiAlertTriangle /></span>
+                            <div className="adm-setting-copy">
+                              <p className="adm-card-title">Technical issue page</p>
+                              <p className="adm-card-sub">Shows a “we’re fixing something” page while a problem is being resolved.</p>
+                            </div>
+                            <label className="adm-switch">
+                              <input
+                                type="checkbox"
+                                checked={settingsForm.issueEnabled}
+                                onChange={(e) => setSettingsForm((prev) => ({ ...prev, issueEnabled: e.target.checked }))}
+                                aria-label="Enable technical issue page"
+                              />
+                              <span aria-hidden="true" />
+                            </label>
+                          </div>
+                          <div className={`adm-setting-state${settingsForm.issueEnabled ? ' on' : ''}`}>
+                            <i /> {settingsForm.issueEnabled ? 'Technical issue page is live' : 'No active issue notice'}
+                          </div>
+                          <label className="adm-setting-field">
+                            <span>Message shown to customers <em>optional</em></span>
+                            <textarea
+                              rows={3}
+                              maxLength={500}
+                              value={settingsForm.issueMessage}
+                              onChange={(e) => setSettingsForm((prev) => ({ ...prev, issueMessage: e.target.value }))}
+                              placeholder="ZiiShe is having a technical issue right now. Our team is already on it — please try again shortly."
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="adm-settings-foot">
+                        <p>
+                          {settingsForm.maintenanceEnabled && settingsForm.issueEnabled
+                            ? 'Customers will see the maintenance page (it takes priority).'
+                            : settingsForm.maintenanceEnabled
+                              ? 'Customers will see the maintenance page.'
+                              : settingsForm.issueEnabled
+                                ? 'Customers will see the technical issue page.'
+                                : 'Customers can browse the storefront normally.'}
+                        </p>
+                        <button
+                          type="button"
+                          className="adm-btn adm-btn-solid"
+                          onClick={saveSettings}
+                          disabled={savingSettings}
+                        >
+                          {savingSettings ? 'Saving…' : 'Save settings'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
       </div>
 
-      {/* ── Product editor ── */}
-      <div className={`modal-overlay${modalOpen ? ' open' : ''}`} onClick={(e) => e.target === e.currentTarget && closeModal()}>
-        <div className="modal adm-modal" role="dialog" aria-modal="true" aria-label={editProduct ? 'Edit product' : 'Add product'}>
-          <div className="adm-modal-head">
-            <div>
-              <h2>{editProduct ? 'Edit product' : 'Add product'}</h2>
-              <p>{editProduct ? `Updating “${editProduct.name}”` : 'Fill in the details to publish a new item.'}</p>
-            </div>
-            <button type="button" className="adm-modal-x" onClick={closeModal} aria-label="Close"><FiX /></button>
-          </div>
+      <CategoryManager
+        open={categoryModalOpen}
+        onClose={() => setCategoryModalOpen(false)}
+      />
 
-          <form className="adm-form" onSubmit={handleSave}>
-            <div className="adm-form-grid">
-              <div className="adm-field span-2">
-                <label htmlFor="ap-name">Product name</label>
-                <input id="ap-name" name="name" type="text" value={form.name} onChange={handleFormChange} required />
-              </div>
-              <div className="adm-field">
-                <label htmlFor="ap-category">Category</label>
-                <input id="ap-category" name="category" type="text" value={form.category} onChange={handleFormChange} placeholder="e.g. Hoodies" required />
-              </div>
-              <div className="adm-field">
-                <label htmlFor="ap-price">Price (₹)</label>
-                <input id="ap-price" name="price" type="number" min="0" value={form.price} onChange={handleFormChange} required />
-              </div>
-              <div className="adm-field">
-                <label htmlFor="ap-stock">Stock</label>
-                <input id="ap-stock" name="stock" type="number" min="0" value={form.stock} onChange={handleFormChange} required />
-              </div>
-              <div className="adm-field">
-                <label htmlFor="ap-sizes">Sizes <span className="adm-muted">(comma separated)</span></label>
-                <input id="ap-sizes" name="sizes" type="text" value={form.sizes} onChange={handleFormChange} placeholder="S, M, L, XL" />
-              </div>
-              <div className="adm-field span-2">
-                <label htmlFor="ap-colors">Colours <span className="adm-muted">(comma separated)</span></label>
-                <input id="ap-colors" name="colors" type="text" value={form.colors} onChange={handleFormChange} placeholder="Black, Cream, Gold" />
-              </div>
+      <CouponEditor
+        open={couponModalOpen}
+        coupon={couponEditing}
+        products={products}
+        categories={categories}
+        onClose={() => setCouponModalOpen(false)}
+        onSaved={() => fetchData({ silent: true })}
+      />
 
-              <div className="adm-field span-2">
-                <label>Product image</label>
-                <div className="adm-upload">
-                  {form.image
-                    ? <OptimizedCloudinaryImage src={form.image} alt="Preview" className="adm-upload-preview" width="84" height="100" />
-                    : <span className="adm-upload-preview adm-upload-fallback"><FiImage /></span>}
-                  <div className="adm-upload-body">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      onChange={handleImageFile}
-                      className="adm-file-input"
-                    />
-                    <input
-                      name="image"
-                      type="text"
-                      value={form.imageFile ? '' : form.image}
-                      onChange={handleFormChange}
-                      placeholder="…or paste an image URL"
-                      disabled={Boolean(form.imageFile)}
-                    />
-                    {form.image && (
-                      <button type="button" className="adm-btn adm-btn-ghost adm-btn-sm" onClick={clearImage} style={{ alignSelf: 'flex-start' }}><FiX /> Clear image</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="adm-field span-2">
-                <label htmlFor="ap-gallery">More photos <span className="adm-muted">(up to {MAX_EXTRA_PHOTOS}, shown as thumbnails)</span></label>
-                <div className="adm-gallery">
-                  {form.extras.map((item, i) => (
-                    <div className="adm-gallery-item" key={item.url}>
-                      <img src={item.url} alt={`Extra photo ${i + 1}`} />
-                      <button
-                        type="button"
-                        className="adm-gallery-x"
-                        onClick={() => removeExtra(i)}
-                        aria-label="Remove photo"
-                        title="Remove photo"
-                      >
-                        <FiX />
-                      </button>
-                    </div>
-                  ))}
-                  {form.extras.length < MAX_EXTRA_PHOTOS && (
-                    <label className="adm-gallery-add" title="Add photos">
-                      <FiPlus />
-                      <input
-                        id="ap-gallery"
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,image/gif"
-                        multiple
-                        onChange={handleGalleryFiles}
-                        className="adm-file-hidden"
-                      />
-                    </label>
-                  )}
-                </div>
-              </div>
-
-              <div className="adm-field span-2">
-                <label htmlFor="ap-desc">Description</label>
-                <textarea id="ap-desc" name="description" value={form.description} onChange={handleFormChange} rows={4} />
-              </div>
-            </div>
-
-            <div className="adm-checks">
-              <label className="adm-check" htmlFor="ap-featured">
-                <input id="ap-featured" type="checkbox" name="featured" checked={form.featured} onChange={handleFormChange} />
-                Mark as featured
-              </label>
-            </div>
-
-            <div className="adm-modal-foot">
-              <button type="button" className="adm-btn adm-btn-ghost" onClick={closeModal}>Cancel</button>
-              <button type="submit" className="adm-btn adm-btn-solid" disabled={submitting}>
-                {submitting ? 'Saving…' : editProduct ? 'Save changes' : 'Create product'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
     </div>
   );
 }

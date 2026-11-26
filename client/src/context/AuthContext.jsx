@@ -55,6 +55,11 @@ export const AuthProvider = ({ children }) => {
     return persistUser(data);
   };
 
+  const updateAddress = async (addressId, address) => {
+    const { data } = await axios.put(`/api/auth/addresses/${addressId}`, address);
+    return persistUser(data);
+  };
+
   const removeAddress = async (addressId) => {
     const { data } = await axios.delete(`/api/auth/addresses/${addressId}`);
     return persistUser(data);
@@ -75,6 +80,7 @@ export const AuthProvider = ({ children }) => {
         loading,
         saveProfile,
         addAddress,
+        updateAddress,
         removeAddress,
         savePreferences,
       }}

@@ -1,10 +1,18 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { useCart } from '../context/CartContext';
-import { formatPrice } from '../utils/helpers';
+import { useLike } from '../context/LikeContext';
+import StarRating from './StarRating';
+import { FiHeart } from 'react-icons/fi';
+import { formatPrice, getDiscount, getRatingSummary } from '../utils/helpers';
 
 export default function ProductCard({ product }) {
   const { addToCart } = useCart();
+  const { isLiked, toggleLike } = useLike();
+  const liked = isLiked(product._id);
+  const discount = getDiscount(product);
+  const { rating, count: reviewCount } = getRatingSummary(product);
   const cardRef = useRef(null);
 
   // 3D tilt effect
@@ -49,6 +57,16 @@ export default function ProductCard({ product }) {
     addToCart(product, 1, product.sizes?.[0] || '', product.colors?.[0] || '');
   };
 
+  const handleToggleLike = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleLike(product);
+    toast.success(liked ? `${product.name} removed from liked` : `${product.name} added to liked`, {
+      style: { fontFamily: 'var(--font-sans)', background: 'var(--black)', color: 'var(--cream)', borderRadius: '4px' },
+      iconTheme: { primary: 'var(--gold)', secondary: 'var(--black)' },
+    });
+  };
+
   return (
     <div
       ref={cardRef}
@@ -82,8 +100,15 @@ export default function ProductCard({ product }) {
           </div>
 
           {/* Wishlist */}
-          <button className="product-wishlist" onClick={(e) => e.preventDefault()} aria-label="Wishlist">
-            ♡
+          <button
+            type="button"
+            className={`product-wishlist${liked ? ' active' : ''}`}
+            onClick={handleToggleLike}
+            aria-label={liked ? `Remove ${product.name} from liked` : `Like ${product.name}`}
+            aria-pressed={liked}
+            title={liked ? 'Remove from liked' : 'Like this piece'}
+          >
+            <FiHeart aria-hidden="true" />
           </button>
         </div>
 
@@ -91,11 +116,23 @@ export default function ProductCard({ product }) {
           <p className="product-category">{product.category}</p>
           <h3 className="product-name">{product.name}</h3>
           <div className="product-footer">
-            <span className="product-price">{formatPrice(product.price)}</span>
-            <span className="product-rating">
-              <span style={{ fontSize: '0.75rem' }}>{'★'.repeat(Math.round(product.rating || 0))}</span>
-              <span style={{ color: 'var(--gray)', fontSize: '0.75rem' }}>({product.numReviews})</span>
+            <span className="product-price-wrap">
+              <span className="product-price">{formatPrice(product.price)}</span>
+              {discount && (
+                <>
+                  <span className="product-mrp">{formatPrice(discount.mrp)}</span>
+                  <span className="product-off">{discount.percent}% off</span>
+                </>
+              )}
             </span>
+            {reviewCount > 0 ? (
+              <span className="product-rating">
+                <StarRating rating={rating} />
+                <span style={{ color: 'var(--gray)', fontSize: '0.75rem' }}>({reviewCount})</span>
+              </span>
+            ) : (
+              <span className="product-rating-empty">No reviews</span>
+            )}
           </div>
         </div>
       </Link>

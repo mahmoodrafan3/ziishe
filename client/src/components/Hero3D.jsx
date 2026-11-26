@@ -1,7 +1,7 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 
-export default function Hero3D() {
+export default function Hero3D({ products = [] }) {
   const layer1Ref = useRef(null);
   const layer2Ref = useRef(null);
   const layer3Ref = useRef(null);
@@ -9,11 +9,15 @@ export default function Hero3D() {
   const [heroImgLoaded, setHeroImgLoaded] = useState(false);
   const [activeHeroImage, setActiveHeroImage] = useState(0);
 
-  const heroImages = [
-    { src: '/images/hero-street.jpg', alt: 'Model wearing a ZiiShe dress' },
-    { src: '/images/Streetwear%20Attitude%20in%20Studio%20Light.png', alt: 'ZiiShe womenswear look in studio light' },
-    { src: '/images/Moody%20Streetwear%20Chair%20Portrait.png', alt: 'ZiiShe portrait seated in a sculptural chair' },
-  ];
+  // The hero cycles real products: clicking a photo opens that product page.
+  const heroImages = (Array.isArray(products) ? products : [])
+    .filter((product) => product?.image)
+    .map((product) => ({
+      id: product._id,
+      src: product.image,
+      alt: product.name || 'ZiiShe product',
+    }));
+  const heroKey = heroImages.map((image) => image.id).join('|');
 
   // The hero image is preloaded in index.html, so it is usually already decoded
   // before React attaches onLoad — in that case onLoad never fires and the photo
@@ -25,12 +29,18 @@ export default function Hero3D() {
     }
   }, []);
 
+  // Start from the first photo whenever the product list changes.
   useEffect(() => {
+    setActiveHeroImage(0);
+  }, [heroKey]);
+
+  useEffect(() => {
+    if (heroImages.length < 2) return undefined;
     const timer = window.setInterval(() => {
       setActiveHeroImage((index) => (index + 1) % heroImages.length);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [heroImages.length]);
+  }, [heroKey, heroImages.length]);
 
   // Mouse parallax
   const handleMouseMove = useCallback((e) => {
@@ -67,19 +77,32 @@ export default function Hero3D() {
           opacity: heroImgLoaded ? 1 : 0,
           transition: 'opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1)',
         }}>
-          {heroImages.map((image, index) => (
-            <img
-              ref={index === 0 ? heroImgRef : undefined}
-              key={image.src}
-              className={`hero-photo${index === activeHeroImage ? ' active' : ''}`}
-              src={image.src}
-              alt={image.alt}
-              draggable={false}
-              decoding="async"
-              fetchPriority={index === 0 ? 'high' : 'auto'}
-              onLoad={() => setHeroImgLoaded(true)}
-            />
-          ))}
+          {heroImages.map((image, index) => {
+            const photo = (
+              <img
+                ref={index === 0 ? heroImgRef : undefined}
+                className="hero-photo"
+                src={image.src}
+                alt={image.alt}
+                draggable={false}
+                decoding="async"
+                fetchPriority={index === 0 ? 'high' : 'auto'}
+                onLoad={() => setHeroImgLoaded(true)}
+              />
+            );
+            const slideClass = `hero-photo-link${index === activeHeroImage ? ' active' : ''}`;
+            return (
+              <Link
+                key={image.id}
+                to={`/product/${image.id}`}
+                className={slideClass}
+                aria-label={`View ${image.alt}`}
+                title={image.alt}
+              >
+                {photo}
+              </Link>
+            );
+          })}
         </div>
 
         {/* Ghost brand text behind the photo for depth */}

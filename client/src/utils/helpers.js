@@ -1,10 +1,25 @@
 export const formatPrice = (price) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(price);
 
-export const renderStars = (rating) => {
-  const full = Math.floor(rating);
-  const half = rating % 1 >= 0.5;
-  return '★'.repeat(full) + (half ? '½' : '') + '☆'.repeat(5 - full - (half ? 1 : 0));
+// MRP is the "was" price. A discount only exists when the MRP is actually
+// higher than what the piece sells for, so products without one stay clean.
+export const getDiscount = (product) => {
+  const price = Number(product?.price) || 0;
+  const mrp = Number(product?.mrp) || 0;
+  if (!mrp || mrp <= price) return null;
+  const percent = Math.round(((mrp - price) / mrp) * 100);
+  if (percent < 1) return null;
+  return { mrp, percent, save: mrp - price };
+};
+
+// Ratings come from the reviews a product actually has, never from a stored
+// placeholder score. Cards and the product page use this so the star count and
+// the review count always agree with the reviews list.
+export const getRatingSummary = (product) => {
+  const reviews = Array.isArray(product?.reviews) ? product.reviews : [];
+  const count = reviews.length;
+  const total = reviews.reduce((sum, review) => sum + (Number(review?.rating) || 0), 0);
+  return { rating: count ? total / count : 0, count };
 };
 
 export const getAuthHeader = () => {

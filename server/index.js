@@ -11,6 +11,9 @@ import authRoutes from './routes/authRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import couponRoutes from './routes/couponRoutes.js';
+import settingRoutes from './routes/settingRoutes.js';
+import categoryRoutes from './routes/categoryRoutes.js';
+import { backfillProductCodes } from './utils/productCode.js';
 
 // Refuse to boot without a strong signing secret. Falling through would
 // otherwise let jsonwebtoken sign with `undefined` (trivially forgeable), and
@@ -33,7 +36,17 @@ if (jwtSecret.length < 32 || WEAK_JWT_SECRETS.has(jwtSecret.toLowerCase())) {
   process.exit(1);
 }
 
-connectDB();
+// Give products that predate storefront ids (#bl1001) one as soon as the
+// database is reachable. Existing codes are left untouched.
+connectDB().then(async () => {
+  if (mongoose.connection.readyState !== 1) return;
+  try {
+    const count = await backfillProductCodes();
+    if (count) console.log(`🏷️  Product ids assigned to ${count} product(s)`);
+  } catch (err) {
+    console.error('❌ Product id backfill failed:', err?.message || err);
+  }
+});
 
 const app = express();
 
@@ -107,6 +120,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/coupons', couponRoutes);
+app.use('/api/settings', settingRoutes);
+app.use('/api/categories', categoryRoutes);
 
 // Health check — reflects actual DB connection state
 app.get('/api/health', (req, res) => {

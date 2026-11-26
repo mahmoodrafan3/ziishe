@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { useCart } from '../context/CartContext';
+import { FiArrowLeft, FiShoppingBag } from 'react-icons/fi';
 import { formatPrice } from '../utils/helpers';
 
 export default function Cart() {
@@ -21,7 +22,7 @@ export default function Cart() {
             title="Back"
             onClick={() => navigate(window.history.state?.idx > 0 ? -1 : '/shop')}
           >
-            <span aria-hidden="true">←</span>
+            <FiArrowLeft aria-hidden="true" />
           </button>
           <div className="shop-header-row">
             <h1 className="shop-title">Your Bag</h1>
@@ -36,7 +37,7 @@ export default function Cart() {
         <div className="container">
           {cartItems.length === 0 ? (
             <div className="cart-page-empty">
-              <div className="cart-empty-icon" aria-hidden="true">🛍️</div>
+              <div className="cart-empty-icon" aria-hidden="true"><FiShoppingBag /></div>
               <h2 className="section-title" style={{ margin: 0 }}>Your bag is empty</h2>
               <p className="section-subtitle">Discover the collection and add your favourites.</p>
               <Link to="/shop" className="btn btn-primary">Shop the Collection</Link>

@@ -34,6 +34,16 @@ function ShopIcon() {
   );
 }
 
+function OrdersIcon() {
+  return (
+    <svg {...iconProps} aria-hidden="true">
+      <path d="M21 8.5 12 3 3 8.5v7L12 21l9-5.5v-7Z" />
+      <path d="M3 8.5 12 14l9-5.5" />
+      <path d="M12 14v7" />
+    </svg>
+  );
+}
+
 function BagIcon() {
   return (
     <svg {...iconProps} aria-hidden="true">
@@ -59,6 +69,7 @@ export default function BottomNav() {
 
   const homeActive = pathname === '/';
   const shopActive = pathname.startsWith('/shop') || pathname.startsWith('/product');
+  const ordersActive = pathname.startsWith('/orders');
   const bagActive = pathname === '/cart';
   const accountActive = pathname.startsWith('/profile');
 
@@ -85,6 +96,15 @@ export default function BottomNav() {
           {cartCount > 0 && <span className="bottom-nav-badge">{cartCount}</span>}
         </span>
         <span>Bag</span>
+      </Link>
+
+      <Link
+        to={user ? '/orders' : '/login'}
+        className={`bottom-nav-item${ordersActive ? ' active' : ''}`}
+        aria-current={ordersActive ? 'page' : undefined}
+      >
+        <OrdersIcon />
+        <span>Orders</span>
       </Link>
 
       <Link

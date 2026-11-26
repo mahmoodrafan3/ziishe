@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
 import { validateCoupon } from '../utils/coupon.js';
+import { broadcast } from '../utils/realtime.js';
 
 const router = express.Router();
 
@@ -48,7 +49,7 @@ router.post('/', protect, async (req, res) => {
     let discount = 0;
     let appliedCode = null;
     if (couponCode) {
-      const result = await validateCoupon(couponCode, itemsPrice);
+      const result = await validateCoupon(couponCode, itemsPrice, items);
       if (!result.valid) return res.status(400).json({ message: result.message });
       discount = result.discount;
       appliedCode = result.coupon.code;
@@ -62,6 +63,14 @@ router.post('/', protect, async (req, res) => {
       discount,
       couponCode: appliedCode,
       totalPrice: Math.max(itemsPrice - discount, 0),
+    });
+    // Push the new order to every open admin console so it appears without
+    // a refresh, with just enough detail for the notification.
+    broadcast('orders', {
+      action: 'created',
+      id: order._id,
+      totalPrice: order.totalPrice,
+      customer: req.user.name || 'A customer',
     });
     res.status(201).json(order);
   } catch (err) {
@@ -128,6 +137,7 @@ router.put('/:id/status', protect, admin, async (req, res) => {
       order.deliveredAt = Date.now();
     }
     const updated = await order.save();
+    broadcast('orders', { action: 'status', id: updated._id });
     res.json(updated);
   } catch (err) {
     serverError(res, err, 'status');

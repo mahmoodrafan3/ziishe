@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import PasswordInput from '../components/PasswordInput';
+import { FiArrowLeft } from 'react-icons/fi';
 
 export default function AdminLogin() {
   const [email, setEmail] = useState('');
@@ -85,7 +86,7 @@ export default function AdminLogin() {
         </form>
 
         <a href="/" className="admin-login-back">
-          ← Return to storefront
+          <FiArrowLeft aria-hidden="true" /> Return to storefront
         </a>
       </div>
     </div>

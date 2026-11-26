@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import Logo from '../components/Logo';
 import PasswordInput from '../components/PasswordInput';
+import { FiArrowLeft } from 'react-icons/fi';
 
 export default function Register() {
   const [name, setName] = useState('');
@@ -51,7 +52,7 @@ export default function Register() {
             onMouseEnter={(e) => e.currentTarget.style.color = 'var(--black)'}
             onMouseLeave={(e) => e.currentTarget.style.color = 'var(--gray)'}
           >
-            ← Back to Home
+            <FiArrowLeft aria-hidden="true" /> Back to Home
           </Link>
 
           <h1 className="auth-form-title">Create account</h1>

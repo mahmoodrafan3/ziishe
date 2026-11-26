@@ -3,6 +3,9 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import { CartProvider } from './context/CartContext';
+import { LikeProvider } from './context/LikeContext';
+import { SiteStatusProvider } from './context/SiteStatusContext';
+import SiteStatusGate from './components/SiteStatusGate';
 import { useEffect, useRef } from 'react';
 
 import Home          from './pages/Home';
@@ -12,9 +15,12 @@ import Login         from './pages/Login';
 import Register      from './pages/Register';
 import Profile       from './pages/Profile';
 import Cart          from './pages/Cart';
+import LikedProducts from './pages/LikedProducts';
+import MyOrders      from './pages/MyOrders';
 import Checkout      from './pages/Checkout';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminLogin     from './pages/AdminLogin';
+import AdminProductEditor from './pages/AdminProductEditor';
 
 import EditProfile    from './pages/profile/EditProfile';
 import Addresses      from './pages/profile/Addresses';
@@ -63,10 +69,14 @@ function AppRoutes() {
         <Route path="/profile/privacy"       element={<PrivacyCentre />} />
         <Route path="/profile/terms"         element={<Terms />} />
         <Route path="/profile/faqs"          element={<Faqs />} />
+        <Route path="/liked"      element={<LikedProducts />} />
+        <Route path="/orders"     element={<MyOrders />} />
         <Route path="/cart"       element={<Cart />} />
         <Route path="/checkout"   element={<Checkout />} />
         {/* Separate admin portal — not reachable from the storefront login */}
         <Route path="/admin/login" element={<AdminLogin />} />
+        <Route path="/admin/products/new" element={<AdminProductEditor />} />
+        <Route path="/admin/products/:id/edit" element={<AdminProductEditor />} />
         <Route path="/admin"       element={<AdminDashboard />} />
         <Route path="*"           element={<NotFound />} />
       </Routes>
@@ -88,16 +98,22 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <AdminAuthProvider>
+        <SiteStatusProvider>
         <CartProvider>
-          <AppRoutes />
-          <Toaster
-            position="top-right"
-            toastOptions={{
-              duration: 3000,
-              style: { fontFamily: 'var(--font-sans)', fontSize: '0.88rem' },
-            }}
-          />
+          <LikeProvider>
+            <SiteStatusGate>
+              <AppRoutes />
+            </SiteStatusGate>
+            <Toaster
+              position="top-right"
+              toastOptions={{
+                duration: 3000,
+                style: { fontFamily: 'var(--font-sans)', fontSize: '0.88rem' },
+              }}
+            />
+          </LikeProvider>
         </CartProvider>
+        </SiteStatusProvider>
         </AdminAuthProvider>
       </AuthProvider>
     </BrowserRouter>
