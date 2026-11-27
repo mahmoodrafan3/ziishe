@@ -35,7 +35,7 @@ export default function Logo({ size = 32, className = '' }) {
       {/* Monogram letters, interrupted by the ribbon gap */}
       <g
         mask="url(#ziishe-ribbon-gap)"
-        fontFamily="'Cormorant Garamond', 'Times New Roman', Georgia, serif"
+        fontFamily="'ZiiShe Mark', 'Cormorant Garamond', 'Times New Roman', Georgia, serif"
         fontWeight="500"
       >
         <text x="4" y="80" fontSize="68" letterSpacing="-1.5">Z</text>

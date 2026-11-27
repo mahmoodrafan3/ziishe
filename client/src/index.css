@@ -47,9 +47,27 @@
   --px: clamp(1rem, 4vw, 4rem);
 }
 
+/* The monogram is SVG <text>, so it is painted in whatever face is ready at
+   first paint. Registering the same webfont under a `block` display means the
+   letters are never drawn in the Georgia fallback and then swapped — the mark
+   appears once, already correct, instead of visibly shifting on reload. */
+@font-face {
+  font-family: 'ZiiShe Mark';
+  src: url('https://fonts.gstatic.com/s/cormorantgaramond/v21/co3bmX5slCNuHLi8bLeY9MK7whWMhyjYqXtK.woff2') format('woff2');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: block;
+}
+
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; font-size: 16px; }
+/* Reserve the vertical scrollbar space so a page that grows after load (the
+   storefront starts as skeletons) cannot nudge the centred navbar sideways. */
+html { scroll-behavior: smooth; font-size: 16px; scrollbar-gutter: stable; }
+/* Keep the store fixed-scale on phones: panning/scrolling still works, but
+   pinch and double-tap zoom are disabled (the viewport meta alone is ignored
+   by iOS Safari). */
+html, body { touch-action: pan-x pan-y; }
 body {
   font-family: var(--font-sans);
   background: var(--cream);
@@ -5320,4 +5338,11 @@ a.customer-review-card:focus-visible {
   .adm-cat-body { padding: 1rem 1.1rem; }
   .adm-cat-add { flex-wrap: wrap; }
   .adm-cat-add .adm-btn { width: 100%; justify-content: center; }
+}
+
+/* iOS Safari zooms the page when a focused field's text is under 16px, which
+   bypasses the viewport lock. Keep mobile form controls at 16px so tapping a
+   search box, coupon or checkout field never scales the layout. */
+@media (max-width: 768px) {
+  input, select, textarea { font-size: 16px !important; }
 }
